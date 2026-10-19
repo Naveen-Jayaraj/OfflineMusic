@@ -9,7 +9,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import com.example.offlinemusic.data.database.MusicDatabase
+import com.example.offlinemusic.data.repository.MusicRepository
 import com.example.offlinemusic.data.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,10 +23,14 @@ import kotlinx.coroutines.launch
 
 class MusicPlayerManager private constructor(private val context: Context) {
 
-    private val database = MusicDatabase(context)
+    private val repository = MusicRepository(context)
     private var mediaController: MediaController? = null
     private val scope = CoroutineScope(Dispatchers.Main)
     private var progressJob: Job? = null
+
+    private var activeTrackId: String? = null
+    private var trackPlayStartTimeMs: Long = 0L
+    private var accumulatedPlayedMs: Long = 0L
 
     private val _currentSong = MutableStateFlow<Song?>(null)
     val currentSong: StateFlow<Song?> = _currentSong.asStateFlow()
@@ -98,16 +102,37 @@ class MusicPlayerManager private constructor(private val context: Context) {
         }, ContextCompat.getMainExecutor(context))
     }
 
+    private fun commitCurrentPlayEvent() {
+        val trackId = activeTrackId ?: return
+        if (trackPlayStartTimeMs > 0L) {
+            val sessionPlayed = System.currentTimeMillis() - trackPlayStartTimeMs
+            accumulatedPlayedMs += sessionPlayed
+            trackPlayStartTimeMs = 0L
+        }
+        val totalPlayed = accumulatedPlayedMs
+        val duration = _durationMs.value
+        if (totalPlayed > 3000L) {
+            scope.launch(Dispatchers.IO) {
+                repository.recordPlayEvent(trackId, totalPlayed, duration)
+            }
+        }
+        accumulatedPlayedMs = 0L
+    }
+
     private fun resolveSong(mediaItem: MediaItem?): Song? {
         if (mediaItem == null) return null
         val id = mediaItem.mediaId
         if (id.isNotEmpty()) {
             val cached = songMap[id]
             if (cached != null) return cached
-            val fromDb = database.getSongById(id)
-            if (fromDb != null) {
-                songMap[id] = fromDb
-                return fromDb
+            scope.launch(Dispatchers.IO) {
+                val fromDb = repository.getSongById(id)
+                if (fromDb != null) {
+                    songMap[id] = fromDb
+                    if (_currentSong.value?.id == id) {
+                        _currentSong.value = fromDb
+                    }
+                }
             }
         }
         val meta = mediaItem.mediaMetadata
@@ -136,13 +161,21 @@ class MusicPlayerManager private constructor(private val context: Context) {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
             if (isPlaying) {
+                trackPlayStartTimeMs = System.currentTimeMillis()
                 startProgressTracker()
             } else {
+                commitCurrentPlayEvent()
                 stopProgressTracker()
             }
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            commitCurrentPlayEvent()
+            activeTrackId = mediaItem?.mediaId
+            if (_isPlaying.value) {
+                trackPlayStartTimeMs = System.currentTimeMillis()
+            }
+
             val song = resolveSong(mediaItem)
             _currentSong.value = song
             _durationMs.value = song?.durationMs ?: (mediaController?.duration?.coerceAtLeast(0L) ?: 0L)
@@ -159,6 +192,7 @@ class MusicPlayerManager private constructor(private val context: Context) {
                     _durationMs.value = dur
                 }
             } else if (playbackState == Player.STATE_ENDED) {
+                commitCurrentPlayEvent()
                 _isPlaying.value = false
                 _currentPositionMs.value = 0L
             }
@@ -216,6 +250,14 @@ class MusicPlayerManager private constructor(private val context: Context) {
         _currentSong.value = song
         _durationMs.value = song.durationMs
         _currentPositionMs.value = 0L
+    }
+
+    fun updateSongMetadata(updatedSong: Song) {
+        songMap[updatedSong.id] = updatedSong
+        if (_currentSong.value?.id == updatedSong.id) {
+            _currentSong.value = updatedSong
+        }
+        _queue.value = _queue.value.map { if (it.id == updatedSong.id) updatedSong else it }
     }
 
     fun playSongAtIndex(index: Int) {

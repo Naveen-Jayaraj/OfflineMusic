@@ -11,8 +11,48 @@ import com.example.offlinemusic.data.database.entities.PlaylistTrackEntity
 import com.example.offlinemusic.data.database.entities.TrackEntity
 import kotlinx.coroutines.flow.Flow
 
+data class PlaylistWithStats(
+    val id: String,
+    val name: String,
+    val description: String?,
+    @androidx.room.ColumnInfo(name = "artwork_uri")
+    val artworkUri: String?,
+    @androidx.room.ColumnInfo(name = "playlist_type")
+    val playlistType: String,
+    @androidx.room.ColumnInfo(name = "folder_source_id")
+    val folderSourceId: String?,
+    val trackCount: Int,
+    val totalDurationMs: Long
+)
+
 @Dao
 interface PlaylistDao {
+
+    @Query("""
+        SELECT p.id, p.name, p.description, p.playlist_type, p.folder_source_id,
+               COUNT(pt.track_id) AS trackCount,
+               COALESCE(SUM(t.duration_ms), 0) AS totalDurationMs,
+               COALESCE(p.artwork_uri, (SELECT t2.artwork_uri FROM tracks t2 INNER JOIN playlist_tracks pt2 ON t2.id = pt2.track_id WHERE pt2.playlist_id = p.id AND t2.artwork_uri IS NOT NULL LIMIT 1)) AS artwork_uri
+        FROM playlists p
+        LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
+        LEFT JOIN tracks t ON pt.track_id = t.id
+        GROUP BY p.id
+        ORDER BY CASE WHEN p.playlist_type = 'LIKED' THEN 0 WHEN p.playlist_type = 'FOLDER' THEN 1 ELSE 2 END, p.name COLLATE NOCASE ASC
+    """)
+    fun getAllPlaylistsWithStatsFlow(): Flow<List<PlaylistWithStats>>
+
+    @Query("""
+        SELECT p.id, p.name, p.description, p.playlist_type, p.folder_source_id,
+               COUNT(pt.track_id) AS trackCount,
+               COALESCE(SUM(t.duration_ms), 0) AS totalDurationMs,
+               COALESCE(p.artwork_uri, (SELECT t2.artwork_uri FROM tracks t2 INNER JOIN playlist_tracks pt2 ON t2.id = pt2.track_id WHERE pt2.playlist_id = p.id AND t2.artwork_uri IS NOT NULL LIMIT 1)) AS artwork_uri
+        FROM playlists p
+        LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
+        LEFT JOIN tracks t ON pt.track_id = t.id
+        GROUP BY p.id
+        ORDER BY CASE WHEN p.playlist_type = 'LIKED' THEN 0 WHEN p.playlist_type = 'FOLDER' THEN 1 ELSE 2 END, p.name COLLATE NOCASE ASC
+    """)
+    suspend fun getAllPlaylistsWithStats(): List<PlaylistWithStats>
 
     @Query("SELECT * FROM playlists ORDER BY CASE WHEN playlist_type = 'LIKED' THEN 0 WHEN playlist_type = 'USER' THEN 1 ELSE 2 END, name COLLATE NOCASE ASC")
     fun getAllPlaylistsFlow(): Flow<List<PlaylistEntity>>
@@ -40,6 +80,12 @@ interface PlaylistDao {
 
     @Update
     suspend fun updatePlaylist(playlist: PlaylistEntity)
+
+    @Query("UPDATE playlists SET name = :newName WHERE id = :playlistId")
+    suspend fun updatePlaylistName(playlistId: String, newName: String)
+
+    @Query("UPDATE playlists SET artwork_uri = :artworkUri WHERE id = :playlistId")
+    suspend fun updatePlaylistArtwork(playlistId: String, artworkUri: String?)
 
     @Query("DELETE FROM playlists WHERE id = :playlistId AND playlist_type != 'LIKED'")
     suspend fun deletePlaylistById(playlistId: String)

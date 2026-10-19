@@ -1,8 +1,13 @@
 package com.example.offlinemusic.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +26,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
@@ -55,8 +62,11 @@ import androidx.compose.ui.unit.sp
 import com.example.offlinemusic.data.model.Playlist
 import com.example.offlinemusic.data.model.Song
 import com.example.offlinemusic.ui.components.ArtworkView
+import com.example.offlinemusic.ui.components.DeletePlaylistConfirmDialog
+import com.example.offlinemusic.ui.components.EditPlaylistNameDialog
 import com.example.offlinemusic.ui.components.EqualizerBars
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PlaylistDetailScreen(
     playlist: Playlist,
@@ -69,12 +79,48 @@ fun PlaylistDetailScreen(
     onAddSongsClick: () -> Unit,
     onRemoveSongClick: (Song) -> Unit,
     onDeletePlaylistClick: () -> Unit,
+    onRenamePlaylistClick: (String) -> Unit = {},
+    onChangeCoverClick: (Uri?) -> Unit = {},
     onAddToAnotherPlaylistClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit = {},
     onArtistClick: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    var showActionMenu by remember { mutableStateOf(false) }
+    var showEditNameDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onChangeCoverClick(uri)
+        }
+    }
+
+    if (showEditNameDialog) {
+        EditPlaylistNameDialog(
+            currentName = playlist.name,
+            onDismiss = { showEditNameDialog = false },
+            onConfirm = { newName ->
+                showEditNameDialog = false
+                onRenamePlaylistClick(newName)
+            }
+        )
+    }
+
+    if (showDeleteConfirmDialog) {
+        DeletePlaylistConfirmDialog(
+            playlistName = playlist.name,
+            onDismiss = { showDeleteConfirmDialog = false },
+            onConfirm = {
+                showDeleteConfirmDialog = false
+                onDeletePlaylistClick()
+            }
+        )
+    }
+
     val isLikedSpecial = playlist.isLikedSpecial
     val isFolder = playlist.playlistType == "FOLDER"
     val isUserPlaylist = playlist.playlistType == "USER"
@@ -129,7 +175,7 @@ fun PlaylistDetailScreen(
             }
 
             Box {
-                if (isUserPlaylist) {
+                if (!isLikedSpecial) {
                     IconButton(onClick = { showMenu = true }) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
@@ -144,21 +190,49 @@ fun PlaylistDetailScreen(
                         modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Add Songs to Playlist...", color = MaterialTheme.colorScheme.onSurface) },
-                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                            text = { Text("Edit Playlist Name...", color = MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                             onClick = {
                                 showMenu = false
-                                onAddSongsClick()
+                                showEditNameDialog = true
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Delete Playlist", color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                            text = { Text("Change Cover Image...", color = MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                             onClick = {
                                 showMenu = false
-                                onDeletePlaylistClick()
+                                imagePickerLauncher.launch("image/*")
                             }
                         )
+                        if (playlist.artworkUri != null) {
+                            DropdownMenuItem(
+                                text = { Text("Remove Custom Cover", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                onClick = {
+                                    showMenu = false
+                                    onChangeCoverClick(null)
+                                }
+                            )
+                        }
+                        if (isUserPlaylist) {
+                            DropdownMenuItem(
+                                text = { Text("Add Songs to Playlist...", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                onClick = {
+                                    showMenu = false
+                                    onAddSongsClick()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete Playlist", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    showMenu = false
+                                    showDeleteConfirmDialog = true
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -181,6 +255,9 @@ fun PlaylistDetailScreen(
                             .size(190.dp)
                             .clip(RoundedCornerShape(20.dp))
                             .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                            .clickable(enabled = !isLikedSpecial) {
+                                imagePickerLauncher.launch("image/*")
+                            }
                     ) {
                         if (isLikedSpecial) {
                             Box(
@@ -226,12 +303,44 @@ fun PlaylistDetailScreen(
                                 )
                             }
                         }
+
+                        // Camera overlay badge to indicate customizable cover
+                        if (!isLikedSpecial) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(8.dp)
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
+                                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CameraAlt,
+                                    contentDescription = "Change Cover",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Name
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Name (with Double Click to Rename)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .combinedClickable(
+                                enabled = !isLikedSpecial,
+                                onDoubleClick = { showEditNameDialog = true },
+                                onClick = {}
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
                         Icon(
                             imageVector = when {
                                 isLikedSpecial -> Icons.Default.Favorite
@@ -253,6 +362,28 @@ fun PlaylistDetailScreen(
                             color = MaterialTheme.colorScheme.onBackground,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
+                        )
+                        if (!isLikedSpecial) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            IconButton(
+                                onClick = { showEditNameDialog = true },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Rename Playlist",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (!isLikedSpecial) {
+                        Text(
+                            text = "Double-tap name to rename",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
                     }
 
@@ -278,10 +409,11 @@ fun PlaylistDetailScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Actions
+                    // Actions Row: Play, Shuffle, and 3-dot More Options Button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Button(
                             onClick = onPlayAllClick,
@@ -311,6 +443,76 @@ fun PlaylistDetailScreen(
                             Icon(imageVector = Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(text = "SHUFFLE", fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        }
+
+                        if (!isLikedSpecial) {
+                            Box {
+                                IconButton(
+                                    onClick = { showActionMenu = true },
+                                    modifier = Modifier
+                                        .size(46.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoreVert,
+                                        contentDescription = "Playlist Settings",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = showActionMenu,
+                                    onDismissRequest = { showActionMenu = false },
+                                    modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Edit Name...", color = MaterialTheme.colorScheme.onSurface) },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                        onClick = {
+                                            showActionMenu = false
+                                            showEditNameDialog = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Change Playlist Cover...", color = MaterialTheme.colorScheme.onSurface) },
+                                        leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                        onClick = {
+                                            showActionMenu = false
+                                            imagePickerLauncher.launch("image/*")
+                                        }
+                                    )
+                                    if (playlist.artworkUri != null) {
+                                        DropdownMenuItem(
+                                            text = { Text("Remove Custom Cover", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                            onClick = {
+                                                showActionMenu = false
+                                                onChangeCoverClick(null)
+                                            }
+                                        )
+                                    }
+                                    if (isUserPlaylist) {
+                                        DropdownMenuItem(
+                                            text = { Text("Add Songs...", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                            onClick = {
+                                                showActionMenu = false
+                                                onAddSongsClick()
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Delete Playlist", color = MaterialTheme.colorScheme.error) },
+                                            leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                            onClick = {
+                                                showActionMenu = false
+                                                showDeleteConfirmDialog = true
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 

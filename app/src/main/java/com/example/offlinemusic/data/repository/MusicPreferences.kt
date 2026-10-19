@@ -17,6 +17,30 @@ class MusicPreferences(context: Context) {
         private const val KEY_SORT_BY = "key_sort_by"
         private const val KEY_SORT_ORDER = "key_sort_order"
         private const val KEY_LAST_PLAYED_ID = "key_last_played_id"
+        private const val KEY_RECENT_SEARCHES = "key_recent_searches"
+    }
+
+    fun getRecentSearches(): List<String> {
+        val raw = prefs.getString(KEY_RECENT_SEARCHES, null) ?: return emptyList()
+        return raw.split("\u001F").filter { it.isNotBlank() }
+    }
+
+    fun addRecentSearch(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return
+        val current = getRecentSearches().filterNot { it.equals(trimmed, ignoreCase = true) }.toMutableList()
+        current.add(0, trimmed)
+        val limited = current.take(20)
+        prefs.edit().putString(KEY_RECENT_SEARCHES, limited.joinToString("\u001F")).apply()
+    }
+
+    fun removeRecentSearch(query: String) {
+        val current = getRecentSearches().filterNot { it.equals(query.trim(), ignoreCase = true) }
+        prefs.edit().putString(KEY_RECENT_SEARCHES, current.joinToString("\u001F")).apply()
+    }
+
+    fun clearRecentSearches() {
+        prefs.edit().remove(KEY_RECENT_SEARCHES).apply()
     }
 
     var selectedFolderUri: Uri?

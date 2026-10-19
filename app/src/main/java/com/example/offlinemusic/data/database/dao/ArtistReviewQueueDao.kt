@@ -16,6 +16,15 @@ interface ArtistReviewQueueDao {
     @Query("SELECT * FROM artist_review_queue WHERE status = 'PENDING' ORDER BY created_at ASC")
     suspend fun getPendingReviews(): List<ArtistReviewQueueEntity>
 
+    @Query("SELECT COUNT(*) FROM artist_review_queue WHERE status = 'PENDING'")
+    fun getPendingReviewCountFlow(): Flow<Int>
+
+    @Query("SELECT * FROM artist_review_queue WHERE status = 'PENDING' ORDER BY created_at ASC LIMIT 1")
+    suspend fun getOldestPendingReview(): ArtistReviewQueueEntity?
+
+    @Query("SELECT raw_credited_string FROM artist_review_queue")
+    suspend fun getAllRawCreditedStrings(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertReview(review: ArtistReviewQueueEntity): Long
 

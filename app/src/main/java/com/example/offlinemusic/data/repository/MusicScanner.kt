@@ -5,7 +5,18 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
-import com.example.offlinemusic.data.database.MusicDatabase
+import androidx.room.withTransaction
+import com.example.offlinemusic.data.database.AppDatabase
+import com.example.offlinemusic.data.database.entities.AlbumEntity
+import com.example.offlinemusic.data.database.entities.ArtistEntity
+import com.example.offlinemusic.data.database.entities.ArtistReviewQueueEntity
+import com.example.offlinemusic.data.database.entities.FolderSourceEntity
+import com.example.offlinemusic.data.database.entities.GenreEntity
+import com.example.offlinemusic.data.database.entities.PlaylistEntity
+import com.example.offlinemusic.data.database.entities.PlaylistTrackEntity
+import com.example.offlinemusic.data.database.entities.TrackArtistEntity
+import com.example.offlinemusic.data.database.entities.TrackEntity
+import com.example.offlinemusic.data.database.entities.TrackGenreEntity
 import com.example.offlinemusic.data.model.Album
 import com.example.offlinemusic.data.model.ArtistProfile
 import com.example.offlinemusic.data.model.Song
@@ -16,10 +27,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.ArrayDeque
+import java.util.UUID
 
 class MusicScanner(private val context: Context) {
 
-    val database = MusicDatabase(context)
+    private val db = AppDatabase.getInstance(context)
+    val repository = MusicRepository(context)
     private val supportedExtensions = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "opus", "wma")
 
     private fun getArtworkUri(file: File): Uri {
@@ -39,9 +52,18 @@ class MusicScanner(private val context: Context) {
         val albums: List<Album>
     )
 
+    data class ExtractedMetadata(
+        val track: TrackEntity,
+        val artistResult: ArtistParseResult,
+        val albumTitle: String?,
+        val albumArtist: String?,
+        val genreName: String?,
+        val folderName: String
+    )
+
     suspend fun getCachedScanResult(): ScanResult = withContext(Dispatchers.IO) {
-        val songs = database.getAllSongs()
-        val albums = database.getAllAlbums()
+        val songs = repository.getAllSongs()
+        val albums = repository.getAllAlbumsList()
         ScanResult(songs = songs, albums = albums)
     }
 
@@ -50,20 +72,34 @@ class MusicScanner(private val context: Context) {
             ?: return@withContext getCachedScanResult()
 
         val rootFolderName = rootDoc.name ?: "Music Folder"
-        val cachedMap = if (forceFullRescan) emptyMap() else database.getCachedFileMap()
+        val folderSourceId = "source_${treeUri.toString().hashCode().toUInt().toString(16)}"
 
-        val currentSongs = mutableListOf<Song>()
+        // Register or update folder source
+        db.folderSourceDao().insertOrUpdateFolderSource(
+            FolderSourceEntity(
+                id = folderSourceId,
+                folderUri = treeUri.toString(),
+                folderName = rootFolderName,
+                scanStatus = "SCANNING",
+                lastSyncedTimestamp = System.currentTimeMillis()
+            )
+        )
+
+        // Cached track map for fast incremental scanning
+        val existingTracks = if (forceFullRescan) emptyList() else db.trackDao().getAllTracks()
+        val cachedMap = existingTracks.associateBy { it.fileUri }
+
         val filesToExtract = mutableListOf<Pair<DocumentFile, String>>()
         val seenUris = mutableSetOf<String>()
 
         val artworkCacheDir = File(context.cacheDir, "artwork").apply { mkdirs() }
 
-        // Breadth-first traversal
+        // Breadth-first traversal of the file tree
         val queue = ArrayDeque<Pair<DocumentFile, String>>()
         queue.add(Pair(rootDoc, rootFolderName))
 
         while (queue.isNotEmpty()) {
-            val (currentDir, currentAlbumName) = queue.removeFirst()
+            val (currentDir, currentFolder) = queue.removeFirst()
             val files = try {
                 currentDir.listFiles()
             } catch (e: Exception) {
@@ -72,8 +108,8 @@ class MusicScanner(private val context: Context) {
 
             for (file in files) {
                 if (file.isDirectory) {
-                    val subfolderAlbumName = file.name ?: "Unknown Album"
-                    queue.add(Pair(file, subfolderAlbumName))
+                    val subfolderName = file.name ?: "Unknown Folder"
+                    queue.add(Pair(file, subfolderName))
                 } else if (file.isFile) {
                     val fileName = file.name ?: continue
                     val ext = fileName.substringAfterLast('.', "").lowercase()
@@ -86,114 +122,269 @@ class MusicScanner(private val context: Context) {
                         val fileLength = file.length()
 
                         if (!forceFullRescan && cached != null && cached.dateModified == fileLastModified && cached.sizeBytes == fileLength) {
-                            currentSongs.add(cached.song)
+                            // Unchanged file - already in database
                         } else {
-                            filesToExtract.add(Pair(file, currentAlbumName))
+                            filesToExtract.add(Pair(file, currentFolder))
                         }
                     }
                 }
             }
         }
 
-        // Deleted files
+        // Deleted or inaccessible files detection
         val deletedUris = cachedMap.keys.filter { it !in seenUris }
         if (deletedUris.isNotEmpty()) {
-            database.deleteSongsByUris(deletedUris)
+            db.trackDao().deleteTracksByUris(deletedUris)
         }
 
         // Parallel metadata extraction for new/modified files
         if (filesToExtract.isNotEmpty()) {
-            val newlyExtractedSongs = mutableListOf<Song>()
-            filesToExtract.chunked(4).forEach { chunk ->
-                val chunkResults = chunk.map { (file, albumName) ->
+            val extractedList = mutableListOf<ExtractedMetadata>()
+            filesToExtract.chunked(8).forEach { chunk ->
+                val chunkResults = chunk.map { (file, folderName) ->
                     async(Dispatchers.IO) {
-                        extractSongMetadata(file, albumName, artworkCacheDir)
+                        extractSongMetadata(file, folderName, artworkCacheDir)
                     }
                 }.awaitAll().filterNotNull()
 
-                newlyExtractedSongs.addAll(chunkResults)
+                extractedList.addAll(chunkResults)
             }
 
-            database.insertOrUpdateScannedData(newlyExtractedSongs)
-            currentSongs.addAll(newlyExtractedSongs)
+            // Batch insert into Room database
+            batchInsertScannedData(extractedList, folderSourceId)
         }
 
-        val allDbSongs = database.getAllSongs()
-        val allDbAlbums = database.getAllAlbums()
+        // Refresh stats
+        db.albumDao().refreshAllAlbumStats()
+        db.albumDao().cleanupOrphanAlbums()
+        repository.normalizeAndCleanArtistProfiles()
+        repository.syncFolderAndLikedPlaylists()
 
-        ScanResult(songs = allDbSongs, albums = allDbAlbums)
+        // Auto-resolve any exact normalized matches in review queue (no user confirmation needed for exact match)
+        repository.autoResolveExactReviews()
+
+        db.folderSourceDao().updateScanStatus(folderSourceId, "SYNCED", System.currentTimeMillis())
+
+        // Enqueue background genre enrichment (deferred, non-blocking)
+        GenreEnrichmentWorker.enqueue(context)
+
+        getCachedScanResult()
     }
 
-    suspend fun getAlbumWithSongs(albumId: String): Album? = withContext(Dispatchers.IO) {
-        database.getAlbumWithSongs(albumId)
-    }
+    private suspend fun batchInsertScannedData(
+        metadataList: List<ExtractedMetadata>,
+        folderSourceId: String
+    ) = withContext(Dispatchers.IO) {
+        if (metadataList.isEmpty()) return@withContext
 
-    suspend fun getArtistProfile(artistName: String): ArtistProfile = withContext(Dispatchers.IO) {
-        val songs = database.getSongsForArtist(artistName)
-        val albums = database.getAlbumsForArtist(artistName)
-        val firstArt = songs.firstOrNull { it.artworkUri != null }?.artworkUri
-            ?: albums.firstOrNull { it.artworkUri != null }?.artworkUri
+        val tracksToInsert = mutableListOf<TrackEntity>()
+        val artistsToInsert = mutableMapOf<String, ArtistEntity>()
+        val trackArtistsToInsert = mutableListOf<TrackArtistEntity>()
+        val albumsToInsert = mutableMapOf<String, AlbumEntity>()
+        val genresToInsert = mutableMapOf<String, GenreEntity>()
+        val trackGenresToInsert = mutableListOf<TrackGenreEntity>()
+        val folderPlaylists = mutableMapOf<String, PlaylistEntity>()
+        val playlistTracksToInsert = mutableListOf<PlaylistTrackEntity>()
+        val reviewQueueItems = mutableListOf<ArtistReviewQueueEntity>()
 
-        ArtistProfile(
-            name = artistName,
-            songs = songs,
-            albums = albums,
-            totalDurationMs = songs.sumOf { it.durationMs },
-            artworkUri = firstArt
-        )
-    }
+        // Preload existing library artists for smart matching and alias lookup
+        val existingArtists = db.artistDao().getAllArtists()
+        val existingByNormalized = existingArtists.associateBy { it.normalizedName }.toMutableMap()
+        val existingByAlias = mutableMapOf<String, ArtistEntity>()
+        for (artist in existingArtists) {
+            artist.aliases?.split(",")?.forEach { alias ->
+                val normAlias = ArtistNormalizer.normalize(alias)
+                if (normAlias.isNotEmpty()) {
+                    existingByAlias[normAlias] = artist
+                }
+            }
+        }
 
-    suspend fun createCustomAlbum(name: String): String = withContext(Dispatchers.IO) {
-        database.createCustomAlbum(name)
-    }
+        // Deduplicate review queue items so bulk scanning never spams the user
+        val reviewedCreditedStrings = db.artistReviewQueueDao().getAllRawCreditedStrings()
+            .map { it.lowercase().trim() }
+            .toMutableSet()
+        val newlyQueuedStrings = mutableSetOf<String>()
 
-    suspend fun deleteAlbum(albumId: String) = withContext(Dispatchers.IO) {
-        database.deleteAlbum(albumId)
-    }
+        for (item in metadataList) {
+            var track = item.track
 
-    suspend fun addSongsToAlbum(albumId: String, songIds: List<String>) = withContext(Dispatchers.IO) {
-        database.addSongsToAlbum(albumId, songIds)
-    }
+            // 1. Process Album Association
+            val rawAlbum = item.albumTitle?.trim()
+            if (!rawAlbum.isNullOrBlank() && !rawAlbum.equals("Unknown Album", ignoreCase = true) && !rawAlbum.equals("None", ignoreCase = true)) {
+                val normalizedAlbum = rawAlbum.lowercase()
+                val albumId = "album_${normalizedAlbum.hashCode().toUInt().toString(16)}"
+                val albumEntity = AlbumEntity(
+                    id = albumId,
+                    title = rawAlbum,
+                    normalizedTitle = normalizedAlbum,
+                    albumArtist = item.albumArtist ?: item.artistResult.primaryArtist,
+                    releaseYear = track.year,
+                    artworkUri = track.artworkUri
+                )
+                albumsToInsert[albumId] = albumEntity
+                track = track.copy(albumId = albumId)
+            } else {
+                // If album metadata is absent, leave albumId null (Unassigned representation in UI, Spec Section 4)
+                track = track.copy(albumId = null)
+            }
 
-    suspend fun addSongToAlbum(albumId: String, songId: String) = withContext(Dispatchers.IO) {
-        database.addSongToAlbum(albumId, songId)
-    }
+            tracksToInsert.add(track)
 
-    suspend fun removeSongFromAlbum(albumId: String, songId: String) = withContext(Dispatchers.IO) {
-        database.removeSongFromAlbum(albumId, songId)
-    }
+            // 2. Process Artists & Credits with Smart Identification
+            for (credit in item.artistResult.artists) {
+                val norm = credit.normalizedName
+                var targetArtistId: String
 
-    suspend fun moveSongBetweenAlbums(songId: String, fromAlbumId: String, toAlbumId: String) = withContext(Dispatchers.IO) {
-        database.moveSongBetweenAlbums(songId, fromAlbumId, toAlbumId)
-    }
+                // Check A: Is it already present in existing database artists or user-defined aliases? (Exact normalized match)
+                val exactDbMatch = existingByNormalized[norm] ?: existingByAlias[norm]
+                if (exactDbMatch != null) {
+                    targetArtistId = exactDbMatch.id
+                } else {
+                    // Check B: Known global alias (e.g. "marshmellow" -> "Marshmello", "eminem" -> "Eminem")
+                    val isGlobalKnown = ArtistNormalizer.isKnownAlias(credit.creditedName)
+                    val targetArtistName = credit.canonicalName
+                    val targetNormalizedName = ArtistNormalizer.normalize(targetArtistName)
 
-    suspend fun getLikedSongIds(): Set<String> = withContext(Dispatchers.IO) {
-        database.getLikedSongIds()
-    }
+                    // Also check if canonical name has an exact match
+                    val canonicalDbMatch = existingByNormalized[targetNormalizedName] ?: existingByAlias[targetNormalizedName]
+                    if (canonicalDbMatch != null) {
+                        targetArtistId = canonicalDbMatch.id
+                    } else {
+                        targetArtistId = ArtistNormalizer.generateArtistId(targetNormalizedName)
 
-    suspend fun toggleLikeSong(songId: String): Boolean = withContext(Dispatchers.IO) {
-        database.toggleLikeSong(songId)
-    }
+                        val newArtist = ArtistEntity(
+                            id = targetArtistId,
+                            name = targetArtistName,
+                            normalizedName = targetNormalizedName,
+                            aliases = if (credit.creditedName.lowercase() != targetNormalizedName) credit.creditedName else null,
+                            metadataStatus = if (isGlobalKnown) "CONFIRMED" else "AUTO"
+                        )
+                        artistsToInsert[targetArtistId] = newArtist
+                        existingByNormalized[targetNormalizedName] = newArtist
+                        existingByNormalized[norm] = newArtist
 
-    suspend fun isSongLiked(songId: String): Boolean = withContext(Dispatchers.IO) {
-        database.isSongLiked(songId)
+                        // Check C: If it's NOT an exact match while normalized, ask user ONLY if there is a close fuzzy match in the library
+                        val rawLower = credit.creditedName.lowercase().trim()
+                        val isPlaceholder = rawLower.isBlank() || rawLower == "unknown artist" || rawLower == "unknown"
+
+                        if (!isGlobalKnown && !isPlaceholder && rawLower !in reviewedCreditedStrings && rawLower !in newlyQueuedStrings) {
+                            // Find potential near matches in the existing library (MUST NOT be exact match, similarity between 0.65f and 0.99f)
+                            val candidateFuzzyMatches = existingArtists
+                                .filter { it.normalizedName != targetNormalizedName && it.normalizedName != norm }
+                                .map { it to ArtistNormalizer.similarity(it.normalizedName, targetNormalizedName) }
+                                .filter { it.second in 0.65f..0.99f }
+                                .sortedByDescending { it.second }
+                                .take(3)
+                                .map { it.first.name }
+
+                            // ONLY enqueue if there are genuine near-miss fuzzy matches to ask user!
+                            if (candidateFuzzyMatches.isNotEmpty()) {
+                                reviewQueueItems.add(
+                                    ArtistReviewQueueEntity(
+                                        id = "review_${UUID.randomUUID()}",
+                                        trackId = track.id,
+                                        rawCreditedString = credit.creditedName.trim(),
+                                        suggestedArtistIds = candidateFuzzyMatches.joinToString(","),
+                                        status = "PENDING"
+                                    )
+                                )
+                                newlyQueuedStrings.add(rawLower)
+                            }
+                        }
+                    }
+                }
+
+                trackArtistsToInsert.add(
+                    TrackArtistEntity(
+                        trackId = track.id,
+                        artistId = targetArtistId,
+                        creditedName = credit.creditedName,
+                        artistRole = credit.role,
+                        artistOrder = credit.order
+                    )
+                )
+            }
+
+            // 3. Process Genre
+            val rawGenre = item.genreName?.trim()
+            if (!rawGenre.isNullOrBlank()) {
+                val normGenre = rawGenre.lowercase()
+                val genreId = "genre_${normGenre.hashCode().toUInt().toString(16)}"
+                genresToInsert[genreId] = GenreEntity(
+                    id = genreId,
+                    canonicalName = rawGenre,
+                    normalizedName = normGenre
+                )
+                trackGenresToInsert.add(
+                    TrackGenreEntity(
+                        trackId = track.id,
+                        genreId = genreId,
+                        source = "EMBEDDED",
+                        confidence = 1.0f
+                    )
+                )
+            }
+
+            // 4. Folder-based Playlist Synchronization (Spec Section 5)
+            val folderName = item.folderName
+            val folderPlaylistId = "folder_playlist_${folderName.hashCode().toUInt().toString(16)}"
+            if (!folderPlaylists.containsKey(folderPlaylistId)) {
+                folderPlaylists[folderPlaylistId] = PlaylistEntity(
+                    id = folderPlaylistId,
+                    name = folderName,
+                    description = "Folder: $folderName",
+                    artworkUri = track.artworkUri,
+                    playlistType = "FOLDER",
+                    folderSourceId = folderSourceId,
+                    createdAt = System.currentTimeMillis()
+                )
+            }
+            playlistTracksToInsert.add(
+                PlaylistTrackEntity(
+                    playlistId = folderPlaylistId,
+                    trackId = track.id,
+                    position = track.trackNumber ?: 0,
+                    addedTimestamp = System.currentTimeMillis()
+                )
+            )
+        }
+
+        // Perform transactional writes
+        db.withTransaction {
+            db.albumDao().insertAlbums(albumsToInsert.values.toList())
+            db.artistDao().insertArtists(artistsToInsert.values.toList())
+            db.genreDao().getAllGenres() // warm up
+            genresToInsert.values.forEach { db.genreDao().insertGenre(it) }
+
+            db.trackDao().insertTracks(tracksToInsert)
+            db.artistDao().insertTrackArtists(trackArtistsToInsert)
+            db.genreDao().insertTrackGenres(trackGenresToInsert)
+
+            folderPlaylists.values.forEach { db.playlistDao().insertOrUpdatePlaylist(it) }
+            db.playlistDao().insertPlaylistTracks(playlistTracksToInsert)
+
+            reviewQueueItems.forEach { db.artistReviewQueueDao().insertReview(it) }
+        }
     }
 
     private fun extractSongMetadata(
         file: DocumentFile,
-        albumFolderName: String,
+        folderName: String,
         artworkCacheDir: File
-    ): Song? {
+    ): ExtractedMetadata? {
         val uri = file.uri
         val fileName = file.name ?: "Unknown"
         val defaultTitle = fileName.substringBeforeLast('.')
         val sizeBytes = file.length()
         val dateModified = file.lastModified()
-        val songId = uri.toString().hashCode().toString()
+        val trackId = uri.toString().hashCode().toUInt().toString(16)
+        val ext = fileName.substringAfterLast('.', "mp3").lowercase()
 
         var title = defaultTitle
-        var artist = "Unknown Artist"
-        var id3Album = albumFolderName
+        var rawArtist = "Unknown Artist"
+        var rawAlbum: String? = null
+        var rawAlbumArtist: String? = null
         var year: Int? = null
         var genre: String? = null
         var durationMs = 0L
@@ -207,12 +398,13 @@ class MusicScanner(private val context: Context) {
                 if (it.isNotEmpty()) title = it
             }
             mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.trim()?.let {
-                if (it.isNotEmpty()) artist = it
-            } ?: mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)?.trim()?.let {
-                if (it.isNotEmpty()) artist = it
+                if (it.isNotEmpty()) rawArtist = it
+            }
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)?.trim()?.let {
+                if (it.isNotEmpty()) rawAlbumArtist = it
             }
             mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.trim()?.let {
-                if (it.isNotEmpty()) id3Album = it
+                if (it.isNotEmpty()) rawAlbum = it
             }
             mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.trim()?.let {
                 if (it.isNotEmpty()) genre = it
@@ -229,8 +421,8 @@ class MusicScanner(private val context: Context) {
                 trackNumber = it.split('/').firstOrNull()?.trim()?.toIntOrNull()
             }
 
-            // Embedded Album Art caching with fast downsampled thumbnail creation
-            val albumSafeKey = albumFolderName.replace("[^a-zA-Z0-9_-]".toRegex(), "_")
+            // Embedded Album Art caching
+            val albumSafeKey = (rawAlbum ?: folderName).replace("[^a-zA-Z0-9_-]".toRegex(), "_")
             val cachedAlbumArt = File(artworkCacheDir, "art_album_${albumSafeKey}.jpg")
             if (cachedAlbumArt.exists() && cachedAlbumArt.length() > 0) {
                 artworkUri = getArtworkUri(cachedAlbumArt)
@@ -272,25 +464,56 @@ class MusicScanner(private val context: Context) {
             } catch (_: Exception) {}
         }
 
-        return Song(
-            id = songId,
+        val artistParseResult = ArtistNormalizer.parseCredits(rawArtist)
+
+        val trackEntity = TrackEntity(
+            id = trackId,
             title = title,
-            artist = artist,
-            album = id3Album,
-            albumFolder = albumFolderName,
-            year = year,
-            genre = genre,
+            normalizedTitle = title.trim().lowercase(),
             durationMs = durationMs,
+            fileUri = uri.toString(),
+            format = ext,
             sizeBytes = sizeBytes,
-            dateModified = dateModified,
-            uri = uri,
-            relativePath = file.name ?: "",
+            metadataStatus = "PARSED",
+            year = year,
             trackNumber = trackNumber,
-            artworkUri = artworkUri
+            artworkUri = artworkUri?.toString(),
+            dateAdded = System.currentTimeMillis(),
+            dateModified = dateModified,
+            relativePath = file.name ?: ""
+        )
+
+        return ExtractedMetadata(
+            track = trackEntity,
+            artistResult = artistParseResult,
+            albumTitle = rawAlbum,
+            albumArtist = rawAlbumArtist,
+            genreName = genre,
+            folderName = folderName
         )
     }
 
-    fun clearCache() {
-        database.clearAll()
+    // Repository delegate methods for backwards compatibility
+    suspend fun getAlbumWithSongs(albumId: String): Album? = repository.getAlbumWithSongs(albumId)
+    suspend fun getArtistProfile(artistName: String): ArtistProfile = repository.getArtistProfile(artistName)
+    suspend fun createCustomAlbum(name: String): String = repository.createCustomAlbum(name)
+    suspend fun deleteAlbum(albumId: String) = repository.deleteAlbum(albumId)
+    suspend fun addSongsToAlbum(albumId: String, songIds: List<String>) = repository.addSongsToAlbum(albumId, songIds)
+    suspend fun addSongToAlbum(albumId: String, songId: String) = repository.addSongToAlbum(albumId, songId)
+    suspend fun removeSongFromAlbum(albumId: String, songId: String) = repository.removeSongFromAlbum(albumId, songId)
+    suspend fun moveSongBetweenAlbums(songId: String, fromAlbumId: String, toAlbumId: String) = repository.moveSongBetweenAlbums(songId, fromAlbumId, toAlbumId)
+    suspend fun getLikedSongIds(): Set<String> = repository.getLikedSongIds()
+    suspend fun toggleLikeSong(songId: String): Boolean = repository.toggleLikeSong(songId)
+    suspend fun isSongLiked(songId: String): Boolean = repository.isSongLiked(songId)
+    suspend fun updateTrackMetadata(
+        trackId: String,
+        newTitle: String,
+        rawArtistString: String,
+        newAlbum: String?,
+        newGenre: String?,
+        newArtworkUri: Uri?
+    ): Song? = repository.updateTrackMetadata(trackId, newTitle, rawArtistString, newAlbum, newGenre, newArtworkUri)
+    suspend fun clearCache() = withContext(Dispatchers.IO) {
+        db.trackDao().deleteAllTracks()
     }
 }

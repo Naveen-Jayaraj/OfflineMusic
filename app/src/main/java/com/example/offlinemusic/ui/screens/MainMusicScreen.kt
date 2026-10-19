@@ -2,47 +2,11 @@ package com.example.offlinemusic.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Sort
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -51,25 +15,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.example.offlinemusic.data.model.Album
+import com.example.offlinemusic.data.model.Playlist
 import com.example.offlinemusic.data.model.Song
 import com.example.offlinemusic.ui.MainViewModel
-import com.example.offlinemusic.ui.components.AddToAlbumDialog
-import com.example.offlinemusic.ui.components.AddSongsToAlbumSheet
-import com.example.offlinemusic.ui.components.AlbumCard
-import com.example.offlinemusic.ui.components.ArtworkView
-import com.example.offlinemusic.ui.components.CreateAlbumDialog
+import com.example.offlinemusic.ui.components.AddToPlaylistDialog
+import com.example.offlinemusic.ui.components.AddSongsToPlaylistSheet
+import com.example.offlinemusic.ui.components.ArtistConfirmationDialog
+import com.example.offlinemusic.ui.components.BottomNavBar
+import com.example.offlinemusic.ui.components.CreatePlaylistDialog
 import com.example.offlinemusic.ui.components.FolderPickerPrompt
 import com.example.offlinemusic.ui.components.FullPlayerSheet
+import com.example.offlinemusic.ui.components.MetadataEditorDialog
 import com.example.offlinemusic.ui.components.MiniPlayer
-import com.example.offlinemusic.ui.components.MoveSongDialog
 import com.example.offlinemusic.ui.components.SortFilterSheet
+import com.example.offlinemusic.ui.navigation.BottomNavTab
 
 @Composable
 fun MainMusicScreen(
@@ -82,10 +41,17 @@ fun MainMusicScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val sortOption by viewModel.sortOption.collectAsState()
-    val albums by viewModel.filteredAlbums.collectAsState()
-    val allAlbums by viewModel.allAlbums.collectAsState()
+    val playlists by viewModel.filteredPlaylists.collectAsState()
+    val allPlaylists by viewModel.allPlaylists.collectAsState()
     val allSongs by viewModel.allSongs.collectAsState()
+    val allAlbums by viewModel.allAlbums.collectAsState()
+    val allArtists by viewModel.allArtists.collectAsState()
+    val availableGenres by viewModel.availableGenres.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
+    val currentTab by viewModel.currentTab.collectAsState()
+    val recentSearches by viewModel.recentSearches.collectAsState()
+
+    val selectedPlaylistDetail by viewModel.selectedPlaylistDetail.collectAsState()
     val selectedAlbumDetail by viewModel.selectedAlbumDetail.collectAsState()
     val selectedArtistProfile by viewModel.selectedArtistProfile.collectAsState()
 
@@ -93,11 +59,14 @@ fun MainMusicScreen(
     val isSortSheetVisible by viewModel.isSortSheetVisible.collectAsState()
     val likedSongIds by viewModel.likedSongIds.collectAsState()
 
-    // Dialog states for customizable albums
-    var showCreateAlbumDialog by remember { mutableStateOf(false) }
-    var songForAddToAlbum by remember { mutableStateOf<Song?>(null) }
-    var songForMove by remember { mutableStateOf<Song?>(null) }
-    var showAddSongsToAlbum by remember { mutableStateOf<Album?>(null) }
+    val pendingReviewCount by viewModel.pendingReviewCount.collectAsState()
+    val artistReviewPrompt by viewModel.currentArtistReview.collectAsState()
+    val songForEditMetadata by viewModel.songForEditMetadata.collectAsState()
+
+    // Dialog states for customizable playlists
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+    var songForAddToPlaylist by remember { mutableStateOf<Song?>(null) }
+    var showAddSongsToPlaylist by remember { mutableStateOf<Playlist?>(null) }
 
     // Player state
     val currentSong by viewModel.playerManager.currentSong.collectAsState()
@@ -113,148 +82,280 @@ fun MainMusicScreen(
         viewModel.hideFullPlayer()
     }
 
-    BackHandler(enabled = !isFullPlayerVisible && selectedAlbumDetail != null) {
+    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail != null) {
+        viewModel.closePlaylistDetail()
+    }
+
+    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail == null && selectedAlbumDetail != null) {
         viewModel.closeAlbumDetail()
     }
 
-    BackHandler(enabled = !isFullPlayerVisible && selectedAlbumDetail == null && selectedArtistProfile != null) {
+    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail == null && selectedAlbumDetail == null && selectedArtistProfile != null) {
         viewModel.closeArtistProfile()
     }
 
-    BackHandler(enabled = !isFullPlayerVisible && selectedAlbumDetail == null && selectedArtistProfile == null && searchQuery.isNotBlank()) {
+    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail == null && selectedAlbumDetail == null && selectedArtistProfile == null && searchQuery.isNotBlank()) {
         viewModel.setSearchQuery("")
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        // Active Screen Content
-        when {
-            selectedFolderUri == null -> {
-                FolderPickerPrompt(onSelectFolderClick = onPickFolderClick)
+    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail == null && selectedAlbumDetail == null && selectedArtistProfile == null && searchQuery.isBlank() && currentTab != BottomNavTab.HOME) {
+        viewModel.selectTab(BottomNavTab.HOME)
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        if (selectedFolderUri == null) {
+            FolderPickerPrompt(onSelectFolderClick = onPickFolderClick)
+        } else {
+            // Main Content Area
+            Box(modifier = Modifier.fillMaxSize()) {
+                when {
+                    // 1. Playlist Detail Screen
+                    selectedPlaylistDetail != null -> {
+                        PlaylistDetailScreen(
+                            playlist = selectedPlaylistDetail!!,
+                            currentSong = currentSong,
+                            isPlaying = isPlaying,
+                            onBackClick = { viewModel.closePlaylistDetail() },
+                            onSongClick = { song, songs -> viewModel.playSong(song, songs) },
+                            onPlayAllClick = { viewModel.playPlaylist(selectedPlaylistDetail!!) },
+                            onShuffleAllClick = { viewModel.shufflePlaylist(selectedPlaylistDetail!!) },
+                            onAddSongsClick = { showAddSongsToPlaylist = selectedPlaylistDetail },
+                            onRemoveSongClick = { song -> viewModel.removeSongFromPlaylist(selectedPlaylistDetail!!.id, song.id) },
+                            onDeletePlaylistClick = { viewModel.deletePlaylist(selectedPlaylistDetail!!.id) },
+                            onRenamePlaylistClick = { newName -> viewModel.updatePlaylistName(selectedPlaylistDetail!!.id, newName) },
+                            onChangeCoverClick = { newArtUri -> viewModel.updatePlaylistArtwork(selectedPlaylistDetail!!.id, newArtUri) },
+                            onAddToAnotherPlaylistClick = { song -> songForAddToPlaylist = song },
+                            onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
+                            onArtistClick = { viewModel.openArtistProfile(it) }
+                        )
+                    }
+
+                    // 2. Album Detail Screen
+                    selectedAlbumDetail != null -> {
+                        AlbumDetailScreen(
+                            album = selectedAlbumDetail!!,
+                            currentSong = currentSong,
+                            isPlaying = isPlaying,
+                            onBackClick = { viewModel.closeAlbumDetail() },
+                            onSongClick = { song, albumSongs -> viewModel.playSong(song, albumSongs) },
+                            onPlayAllClick = { viewModel.playAlbum(selectedAlbumDetail!!) },
+                            onShuffleAllClick = { viewModel.shuffleAlbum(selectedAlbumDetail!!) },
+                            onEditAlbumName = { newName -> viewModel.updateAlbumName(selectedAlbumDetail!!.id, newName) },
+                            onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
+                            onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
+                            onArtistClick = { viewModel.openArtistProfile(it) }
+                        )
+                    }
+
+                    // 3. Artist Profile Screen
+                    selectedArtistProfile != null -> {
+                        ArtistProfileScreen(
+                            artistProfile = selectedArtistProfile!!,
+                            currentSong = currentSong,
+                            isPlaying = isPlaying,
+                            onBackClick = { viewModel.closeArtistProfile() },
+                            onSongClick = { song, songs -> viewModel.playSong(song, songs) },
+                            onPlayAllClick = { viewModel.playArtist(selectedArtistProfile!!) },
+                            onShuffleAllClick = { viewModel.shuffleArtist(selectedArtistProfile!!) },
+                            onAlbumClick = { album -> viewModel.openAlbumDetail(album) },
+                            onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
+                            onEditSongClick = { song -> viewModel.openMetadataEditor(song) }
+                        )
+                    }
+
+                    // 4. Bottom Navigation Tabs
+                    else -> {
+                        when (currentTab) {
+                            BottomNavTab.HOME -> {
+                                HomeScreen(
+                                    playlists = playlists,
+                                    folderName = selectedFolderName,
+                                    isLoading = isLoading,
+                                    pendingReviewCount = pendingReviewCount,
+                                    onPlaylistClick = { viewModel.openPlaylistDetail(it) },
+                                    onPlayPlaylistClick = { viewModel.playPlaylist(it) },
+                                    onNavigateToLibrary = { viewModel.selectTab(BottomNavTab.LIBRARY) },
+                                    onRescanClick = { viewModel.rescan() },
+                                    onChangeFolderClick = onPickFolderClick,
+                                    onReviewClick = { viewModel.triggerManualReview() }
+                                )
+                            }
+                            BottomNavTab.SEARCH -> {
+                                SearchScreen(
+                                    searchQuery = searchQuery,
+                                    onSearchQueryChange = { viewModel.setSearchQuery(it) },
+                                    recentSearches = recentSearches,
+                                    onRecentSearchClick = { query ->
+                                        viewModel.setSearchQuery(query)
+                                        viewModel.addRecentSearch(query)
+                                    },
+                                    onRemoveRecentSearch = { query ->
+                                        viewModel.removeRecentSearch(query)
+                                    },
+                                    onClearRecentSearches = {
+                                        viewModel.clearRecentSearches()
+                                    },
+                                    searchResults = searchResults,
+                                    currentSong = currentSong,
+                                    isPlaying = isPlaying,
+                                    onSongClick = { song, list -> viewModel.playSong(song, list) },
+                                    onPlaylistClick = { viewModel.openPlaylistDetail(it) },
+                                    onAlbumClick = { viewModel.openAlbumDetail(it) },
+                                    onArtistClick = { viewModel.openArtistProfile(it) },
+                                    onSongAddToPlaylistClick = { songForAddToPlaylist = it },
+                                    onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
+                                    onSaveRecentSearch = { query -> viewModel.addRecentSearch(query) },
+                                    availableGenres = availableGenres
+                                )
+                            }
+                            BottomNavTab.LIBRARY -> {
+                                LibraryScreen(
+                                    playlists = allPlaylists,
+                                    albums = allAlbums,
+                                    artists = allArtists,
+                                    onPlaylistClick = { viewModel.openPlaylistDetail(it) },
+                                    onPlayPlaylistClick = { viewModel.playPlaylist(it) },
+                                    onAlbumClick = { viewModel.openAlbumDetail(it) },
+                                    onArtistClick = { viewModel.openArtistProfile(it) },
+                                    onCreatePlaylistClick = { showCreatePlaylistDialog = true },
+                                    onSortClick = { viewModel.showSortSheet() }
+                                )
+                            }
+                            BottomNavTab.SETTINGS -> {
+                                SettingsScreen(
+                                    folderName = selectedFolderName,
+                                    songCount = allSongs.size,
+                                    playlistCount = allPlaylists.size,
+                                    albumCount = allAlbums.size,
+                                    artistCount = allArtists.size,
+                                    pendingReviewCount = pendingReviewCount,
+                                    isLoading = isLoading,
+                                    onChangeFolderClick = onPickFolderClick,
+                                    onRescanClick = { viewModel.rescan() },
+                                    onReviewArtistsClick = { viewModel.triggerManualReview() }
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
-            // 1. Album Detail Screen
-            selectedAlbumDetail != null -> {
-                AlbumDetailScreen(
-                    album = selectedAlbumDetail!!,
-                    currentSong = currentSong,
-                    isPlaying = isPlaying,
-                    onBackClick = { viewModel.closeAlbumDetail() },
-                    onSongClick = { song, albumSongs -> viewModel.playSong(song, albumSongs) },
-                    onPlayAllClick = { viewModel.playAlbum(selectedAlbumDetail!!) },
-                    onShuffleAllClick = { viewModel.shuffleAlbum(selectedAlbumDetail!!) },
-                    onAddSongsClick = { showAddSongsToAlbum = selectedAlbumDetail },
-                    onRemoveSongClick = { song -> viewModel.removeSongFromAlbum(selectedAlbumDetail!!.id, song.id) },
-                    onMoveSongClick = { song -> songForMove = song },
-                    onAddToAnotherAlbumClick = { song -> songForAddToAlbum = song },
-                    onDeleteAlbumClick = { viewModel.deleteAlbum(selectedAlbumDetail!!.id) }
-                )
-            }
-
-            // 2. Spotify-style Artist Profile Screen
-            selectedArtistProfile != null -> {
-                ArtistProfileScreen(
-                    artistProfile = selectedArtistProfile!!,
-                    currentSong = currentSong,
-                    isPlaying = isPlaying,
-                    onBackClick = { viewModel.closeArtistProfile() },
-                    onSongClick = { song, songs -> viewModel.playSong(song, songs) },
-                    onPlayAllClick = { viewModel.playArtist(selectedArtistProfile!!) },
-                    onShuffleAllClick = { viewModel.shuffleArtist(selectedArtistProfile!!) },
-                    onAlbumClick = { album -> viewModel.openAlbumDetail(album) },
-                    onAddToAlbumClick = { song -> songForAddToAlbum = song }
-                )
-            }
-
-            // 3. Main Home Screen (Spotify Albums Grid & Categorized Search)
-            else -> {
-                HomeScreen(
-                    selectedFolderName = selectedFolderName,
-                    searchQuery = searchQuery,
-                    isLoading = isLoading,
-                    albums = albums,
-                    searchResults = searchResults,
-                    onPickFolderClick = onPickFolderClick,
-                    onSearchQueryChange = { viewModel.setSearchQuery(it) },
-                    onCreateAlbumClick = { showCreateAlbumDialog = true },
-                    onRescanClick = { viewModel.rescan() },
-                    onSortClick = { viewModel.showSortSheet() },
-                    onAlbumClick = { viewModel.openAlbumDetail(it) },
-                    onPlayAlbumClick = { viewModel.playAlbum(it) },
-                    onSongClick = { song, list -> viewModel.playSong(song, list) },
-                    onArtistClick = { viewModel.openArtistProfile(it) },
-                    onSongAddToAlbumClick = { songForAddToAlbum = it }
-                )
-            }
-        }
-
-        // Global Docked MiniPlayer (Always visible at the bottom on ANY screen when playing/paused)
-        if (currentSong != null) {
-            Box(
+            // Bottom Docked MiniPlayer + Bottom Navigation Bar
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
             ) {
-                MiniPlayer(
-                    currentSong = currentSong,
-                    isPlaying = isPlaying,
-                    positionMs = positionMs,
-                    durationMs = durationMs,
-                    isLiked = currentSong?.let { it.id in likedSongIds } ?: false,
-                    onToggleLike = { currentSong?.let { viewModel.toggleLikeSong(it.id) } },
-                    onPlayPauseClick = { viewModel.playerManager.togglePlayPause() },
-                    onSkipNextClick = { viewModel.playerManager.skipToNext() },
-                    onStopClick = { viewModel.playerManager.stopPlayback() },
-                    onExpandClick = { viewModel.showFullPlayer() }
+                // MiniPlayer (floats directly above Bottom Navigation Bar)
+                if (currentSong != null && !isFullPlayerVisible) {
+                    MiniPlayer(
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
+                        positionMs = positionMs,
+                        durationMs = durationMs,
+                        isLiked = currentSong?.let { it.id in likedSongIds } ?: false,
+                        onToggleLike = { currentSong?.let { viewModel.toggleLikeSong(it.id) } },
+                        onPlayPauseClick = { viewModel.playerManager.togglePlayPause() },
+                        onSkipNextClick = { viewModel.playerManager.skipToNext() },
+                        onStopClick = { viewModel.playerManager.stopPlayback() },
+                        onExpandClick = { viewModel.showFullPlayer() }
+                    )
+                }
+
+                // Bottom Navigation Bar
+                BottomNavBar(
+                    currentTab = currentTab,
+                    onTabSelected = { tab ->
+                        if (selectedPlaylistDetail != null) viewModel.closePlaylistDetail()
+                        if (selectedAlbumDetail != null) viewModel.closeAlbumDetail()
+                        if (selectedArtistProfile != null) viewModel.closeArtistProfile()
+                        viewModel.selectTab(tab)
+                    }
                 )
             }
         }
 
-        // Global Dialogs & Sheets (Always rendered so they trigger anywhere without closing albums)
-        if (showCreateAlbumDialog) {
-            CreateAlbumDialog(
-                onDismiss = { showCreateAlbumDialog = false },
+        // Global Dialogs & Sheets
+        if (showCreatePlaylistDialog) {
+            CreatePlaylistDialog(
+                onDismiss = { showCreatePlaylistDialog = false },
                 onConfirm = { name ->
-                    viewModel.createCustomAlbum(name)
-                    showCreateAlbumDialog = false
+                    viewModel.createPlaylist(name)
+                    showCreatePlaylistDialog = false
                 }
             )
         }
 
-        if (songForAddToAlbum != null) {
-            AddToAlbumDialog(
-                song = songForAddToAlbum!!,
-                albums = allAlbums,
-                onDismiss = { songForAddToAlbum = null },
-                onSelectAlbum = { targetAlbum ->
-                    viewModel.addSongToAlbum(targetAlbum.id, songForAddToAlbum!!.id)
-                    songForAddToAlbum = null
+        if (songForAddToPlaylist != null) {
+            AddToPlaylistDialog(
+                song = songForAddToPlaylist!!,
+                playlists = allPlaylists,
+                onDismiss = { songForAddToPlaylist = null },
+                onSelectPlaylist = { targetPlaylist ->
+                    viewModel.addSongToPlaylist(targetPlaylist.id, songForAddToPlaylist!!.id)
+                    songForAddToPlaylist = null
                 },
-                onCreateNewAlbumClick = {
-                    showCreateAlbumDialog = true
+                onCreateNewPlaylistClick = {
+                    showCreatePlaylistDialog = true
                 }
             )
         }
 
-        if (songForMove != null && selectedAlbumDetail != null) {
-            MoveSongDialog(
-                song = songForMove!!,
-                currentAlbumId = selectedAlbumDetail!!.id,
-                albums = allAlbums,
-                onDismiss = { songForMove = null },
-                onTargetAlbumSelected = { destAlbum ->
-                    viewModel.moveSongBetweenAlbums(songForMove!!.id, selectedAlbumDetail!!.id, destAlbum.id)
-                    songForMove = null
+        if (artistReviewPrompt != null) {
+            ArtistConfirmationDialog(
+                prompt = artistReviewPrompt!!,
+                existingArtists = allArtists,
+                onSelectExisting = { existing ->
+                    viewModel.resolveArtistReviewWithExisting(
+                        reviewId = artistReviewPrompt!!.reviewId,
+                        rawCreditedString = artistReviewPrompt!!.rawCreditedString,
+                        existingArtistId = existing.id
+                    )
+                },
+                onCreateNew = { newName ->
+                    viewModel.resolveArtistReviewWithNew(
+                        reviewId = artistReviewPrompt!!.reviewId,
+                        rawCreditedString = artistReviewPrompt!!.rawCreditedString,
+                        newArtistName = newName
+                    )
+                },
+                onRemindLater = {
+                    viewModel.skipArtistReview(artistReviewPrompt!!.reviewId)
+                },
+                onDismissForever = {
+                    viewModel.dismissArtistReviewForever(artistReviewPrompt!!.reviewId)
                 }
             )
         }
 
-        if (showAddSongsToAlbum != null) {
-            AddSongsToAlbumSheet(
-                album = showAddSongsToAlbum!!,
+        if (songForEditMetadata != null) {
+            MetadataEditorDialog(
+                song = songForEditMetadata!!,
+                onDismiss = { viewModel.closeMetadataEditor() },
+                onSave = { newTitle, newArtist, newAlbum, newGenre, newArtUri ->
+                    viewModel.updateTrackMetadata(
+                        trackId = songForEditMetadata!!.id,
+                        newTitle = newTitle,
+                        rawArtistString = newArtist,
+                        newAlbum = newAlbum,
+                        newGenre = newGenre,
+                        newArtworkUri = newArtUri
+                    )
+                }
+            )
+        }
+
+        if (showAddSongsToPlaylist != null) {
+            AddSongsToPlaylistSheet(
+                playlist = showAddSongsToPlaylist!!,
                 allSongs = allSongs,
-                onDismiss = { showAddSongsToAlbum = null },
-                onAddSongs = { songsToAdd ->
-                    viewModel.addSongsToAlbum(showAddSongsToAlbum!!.id, songsToAdd.map { it.id })
+                onDismiss = { showAddSongsToPlaylist = null },
+                onAddSongs = { songIdsToAdd ->
+                    viewModel.addSongsToPlaylist(showAddSongsToPlaylist!!.id, songIdsToAdd)
                 }
             )
         }
@@ -271,7 +372,7 @@ fun MainMusicScreen(
                 queue = queue,
                 isLiked = currentSong?.let { it.id in likedSongIds } ?: false,
                 onToggleLike = { currentSong?.let { viewModel.toggleLikeSong(it.id) } },
-                onAddToAlbumClick = { songForAddToAlbum = currentSong },
+                onAddToPlaylistClick = { songForAddToPlaylist = currentSong },
                 onPlayPauseClick = { viewModel.playerManager.togglePlayPause() },
                 onSkipNextClick = { viewModel.playerManager.skipToNext() },
                 onSkipPreviousClick = { viewModel.playerManager.skipToPrevious() },
@@ -280,7 +381,8 @@ fun MainMusicScreen(
                 onToggleRepeat = { viewModel.playerManager.toggleRepeat() },
                 onStopClick = { viewModel.playerManager.stopPlayback() },
                 onPlayQueueIndex = { viewModel.playerManager.playSongAtIndex(it) },
-                onDismiss = { viewModel.hideFullPlayer() }
+                onDismiss = { viewModel.hideFullPlayer() },
+                onEditMetadataClick = { currentSong?.let { viewModel.openMetadataEditor(it) } }
             )
         }
 
@@ -292,442 +394,11 @@ fun MainMusicScreen(
                 availableYears = emptyList(),
                 selectedYear = null,
                 onSelectYear = {},
-                availableGenres = emptyList(),
+                availableGenres = availableGenres,
                 selectedGenre = null,
                 onSelectGenre = {},
                 onDismiss = { viewModel.hideSortSheet() }
             )
-        }
-    }
-}
-
-@Composable
-private fun HomeScreen(
-    selectedFolderName: String?,
-    searchQuery: String,
-    isLoading: Boolean,
-    albums: List<Album>,
-    searchResults: com.example.offlinemusic.ui.SearchResults,
-    onPickFolderClick: () -> Unit,
-    onSearchQueryChange: (String) -> Unit,
-    onCreateAlbumClick: () -> Unit,
-    onRescanClick: () -> Unit,
-    onSortClick: () -> Unit,
-    onAlbumClick: (Album) -> Unit,
-    onPlayAlbumClick: (Album) -> Unit,
-    onSongClick: (Song, List<Song>) -> Unit,
-    onArtistClick: (String) -> Unit,
-    onSongAddToAlbumClick: (Song) -> Unit
-) {
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                // Header Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "ALBUMS",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 1.sp
-                            ),
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // Folder Pill
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                                .clickable { onPickFolderClick() }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Folder,
-                                contentDescription = null,
-                                modifier = Modifier.size(13.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = selectedFolderName ?: "Folder",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                                color = MaterialTheme.colorScheme.onBackground,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "• Change",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        // Create Album
-                        IconButton(onClick = onCreateAlbumClick) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Create Album",
-                                tint = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-
-                        // Rescan
-                        IconButton(onClick = onRescanClick, enabled = !isLoading) {
-                            if (isLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Rescan",
-                                    tint = MaterialTheme.colorScheme.onBackground
-                                )
-                            }
-                        }
-
-                        // Sort
-                        IconButton(onClick = onSortClick) {
-                            Icon(
-                                imageVector = Icons.Default.Sort,
-                                contentDescription = "Sort",
-                                tint = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Search Input
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
-                    placeholder = {
-                        Text(
-                            text = "Search songs, artists, albums...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    singleLine = true,
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { onSearchQueryChange("") }) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Clear",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            if (searchQuery.isNotBlank()) {
-                // Categorized Search Results
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    // Artists Section
-                    if (searchResults.artists.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "ARTISTS",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        items(searchResults.artists) { artistName ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                    .clickable { onArtistClick(artistName) }
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.surface),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Person,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = artistName,
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = "Artist • View profile & albums",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Songs Section
-                    if (searchResults.songs.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "SONGS",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        items(searchResults.songs, key = { it.id }) { song ->
-                            var songMenuExpanded by remember { mutableStateOf(false) }
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                                    .clickable { onSongClick(song, searchResults.songs) }
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                ArtworkView(
-                                    artworkUri = song.artworkUri,
-                                    size = 40.dp,
-                                    shape = RoundedCornerShape(6.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = song.title,
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "${song.artist} • ${song.formattedDuration}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                Box {
-                                    IconButton(
-                                        onClick = { songMenuExpanded = true },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.MoreVert,
-                                            contentDescription = "Options",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-
-                                    DropdownMenu(
-                                        expanded = songMenuExpanded,
-                                        onDismissRequest = { songMenuExpanded = false },
-                                        modifier = Modifier.background(MaterialTheme.colorScheme.surface)
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text("Add to Album...", color = MaterialTheme.colorScheme.onSurface) },
-                                            onClick = {
-                                                songMenuExpanded = false
-                                                onSongAddToAlbumClick(song)
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("View Artist Profile", color = MaterialTheme.colorScheme.onSurface) },
-                                            onClick = {
-                                                songMenuExpanded = false
-                                                onArtistClick(song.artist)
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Albums Section
-                    if (searchResults.albums.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "ALBUMS",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        items(searchResults.albums, key = { it.id }) { album ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                                    .clickable { onAlbumClick(album) }
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                ArtworkView(
-                                    artworkUri = album.artworkUri,
-                                    size = 44.dp,
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = album.name,
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "Album • ${album.songCount} songs",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    item {
-                        Spacer(modifier = Modifier.height(100.dp))
-                    }
-                }
-            } else {
-                // Default View: Just Show Albums (Spotify Style)
-                if (isLoading && albums.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = MaterialTheme.colorScheme.onBackground)
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Text(
-                                text = "Loading albums...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                } else if (albums.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(24.dp)
-                        ) {
-                            Text(
-                                text = "No albums found",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Create a custom album with '+', or choose a folder containing music.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 100.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(albums, key = { it.id }) { album ->
-                            AlbumCard(
-                                album = album,
-                                onClick = { onAlbumClick(album) },
-                                onPlayClick = { onPlayAlbumClick(album) }
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }

@@ -32,9 +32,10 @@ interface LibraryDao {
     @Query("""
         SELECT t.id, t.title,
                COALESCE((
-                   SELECT credited_name FROM track_artists 
-                   WHERE track_id = t.id 
-                   ORDER BY artist_order ASC LIMIT 1
+                   SELECT GROUP_CONCAT(COALESCE(a.name, ta.credited_name), ', ')
+                   FROM track_artists ta
+                   LEFT JOIN artists a ON ta.artist_id = a.id
+                   WHERE ta.track_id = t.id
                ), 'Unknown Artist') AS artistName,
                COALESCE(a.title, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,
@@ -61,9 +62,10 @@ interface LibraryDao {
     @Query("""
         SELECT t.id, t.title,
                COALESCE((
-                   SELECT credited_name FROM track_artists 
-                   WHERE track_id = t.id 
-                   ORDER BY artist_order ASC LIMIT 1
+                   SELECT GROUP_CONCAT(COALESCE(a.name, ta.credited_name), ', ')
+                   FROM track_artists ta
+                   LEFT JOIN artists a ON ta.artist_id = a.id
+                   WHERE ta.track_id = t.id
                ), 'Unknown Artist') AS artistName,
                COALESCE(a.title, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,
@@ -90,9 +92,10 @@ interface LibraryDao {
     @Query("""
         SELECT t.id, t.title,
                COALESCE((
-                   SELECT credited_name FROM track_artists 
-                   WHERE track_id = t.id 
-                   ORDER BY artist_order ASC LIMIT 1
+                   SELECT GROUP_CONCAT(COALESCE(a.name, ta.credited_name), ', ')
+                   FROM track_artists ta
+                   LEFT JOIN artists a ON ta.artist_id = a.id
+                   WHERE ta.track_id = t.id
                ), 'Unknown Artist') AS artistName,
                COALESCE(a.title, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,
@@ -120,9 +123,10 @@ interface LibraryDao {
     @Query("""
         SELECT t.id, t.title,
                COALESCE((
-                   SELECT credited_name FROM track_artists 
-                   WHERE track_id = t.id 
-                   ORDER BY artist_order ASC LIMIT 1
+                   SELECT GROUP_CONCAT(COALESCE(a.name, ta.credited_name), ', ')
+                   FROM track_artists ta
+                   LEFT JOIN artists a ON ta.artist_id = a.id
+                   WHERE ta.track_id = t.id
                ), 'Unknown Artist') AS artistName,
                COALESCE(a.title, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,
@@ -151,9 +155,10 @@ interface LibraryDao {
     @Query("""
         SELECT t.id, t.title,
                COALESCE((
-                   SELECT credited_name FROM track_artists 
-                   WHERE track_id = t.id 
-                   ORDER BY artist_order ASC LIMIT 1
+                   SELECT GROUP_CONCAT(COALESCE(a.name, ta.credited_name), ', ')
+                   FROM track_artists ta
+                   LEFT JOIN artists a ON ta.artist_id = a.id
+                   WHERE ta.track_id = t.id
                ), 'Unknown Artist') AS artistName,
                COALESCE(a.title, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,

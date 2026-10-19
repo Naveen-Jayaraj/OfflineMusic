@@ -13,10 +13,18 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ArtistDao {
 
-    @Query("SELECT * FROM artists ORDER BY normalized_name ASC")
+    @Query("""
+        SELECT a.* FROM artists a
+        WHERE a.id IN (SELECT DISTINCT artist_id FROM track_artists)
+        ORDER BY a.normalized_name ASC
+    """)
     fun getAllArtistsFlow(): Flow<List<ArtistEntity>>
 
-    @Query("SELECT * FROM artists ORDER BY normalized_name ASC")
+    @Query("""
+        SELECT a.* FROM artists a
+        WHERE a.id IN (SELECT DISTINCT artist_id FROM track_artists)
+        ORDER BY a.normalized_name ASC
+    """)
     suspend fun getAllArtists(): List<ArtistEntity>
 
     @Query("SELECT * FROM artists WHERE id = :id LIMIT 1")
@@ -25,7 +33,12 @@ interface ArtistDao {
     @Query("SELECT * FROM artists WHERE normalized_name = :normalizedName LIMIT 1")
     suspend fun getArtistByNormalizedName(normalizedName: String): ArtistEntity?
 
-    @Query("SELECT * FROM artists WHERE normalized_name LIKE '%' || :query || '%' ORDER BY normalized_name ASC")
+    @Query("""
+        SELECT a.* FROM artists a
+        WHERE a.id IN (SELECT DISTINCT artist_id FROM track_artists)
+          AND a.normalized_name LIKE '%' || :query || '%'
+        ORDER BY a.normalized_name ASC
+    """)
     fun searchArtists(query: String): Flow<List<ArtistEntity>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -34,7 +47,7 @@ interface ArtistDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateArtist(artist: ArtistEntity)
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertArtists(artists: List<ArtistEntity>)
 
     @Update
@@ -45,6 +58,9 @@ interface ArtistDao {
 
     @Query("DELETE FROM track_artists WHERE track_id = :trackId")
     suspend fun deleteTrackArtistsForTrack(trackId: String)
+
+    @Query("DELETE FROM track_artists WHERE artist_id = :artistId")
+    suspend fun deleteTrackArtistsForArtistId(artistId: String)
 
     @Query("""
         SELECT a.* FROM artists a
@@ -61,6 +77,27 @@ interface ArtistDao {
     """)
     suspend fun getCreditedArtistNamesForTrack(trackId: String): List<String>
 
+    @Query("DELETE FROM track_artists WHERE track_id NOT IN (SELECT id FROM tracks)")
+    suspend fun deleteOrphanTrackArtists(): Int
+
+    @Query("DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM track_artists)")
+    suspend fun deleteZeroSongArtists(): Int
+
     @Query("DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM track_artists)")
     suspend fun cleanupOrphanArtists()
+
+    @Query("SELECT * FROM artists WHERE name LIKE '%/%' OR name LIKE '%;%' OR name LIKE '%\\\\%'")
+    suspend fun getCombinedDelimitedArtists(): List<ArtistEntity>
+
+    @Query("SELECT * FROM track_artists WHERE artist_id = :artistId")
+    suspend fun getTrackArtistsForArtistId(artistId: String): List<TrackArtistEntity>
+
+    @Query("SELECT * FROM track_artists WHERE credited_name LIKE '%/%' OR credited_name LIKE '%;%' OR credited_name LIKE '%\\\\%'")
+    suspend fun getTrackArtistsWithDelimiters(): List<TrackArtistEntity>
+
+    @Query("UPDATE track_artists SET artist_id = :newArtistId WHERE credited_name = :rawCreditedString")
+    suspend fun updateArtistIdForCreditedName(rawCreditedString: String, newArtistId: String)
+
+    @Query("UPDATE artists SET aliases = CASE WHEN aliases IS NULL OR aliases = '' THEN :alias ELSE aliases || ',' || :alias END WHERE id = :artistId")
+    suspend fun addAliasToArtist(artistId: String, alias: String)
 }

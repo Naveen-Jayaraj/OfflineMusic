@@ -1,8 +1,10 @@
 package com.example.offlinemusic.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,14 +21,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
-import com.example.offlinemusic.data.database.MusicDatabase
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -52,8 +52,10 @@ import androidx.compose.ui.unit.sp
 import com.example.offlinemusic.data.model.Album
 import com.example.offlinemusic.data.model.Song
 import com.example.offlinemusic.ui.components.ArtworkView
+import com.example.offlinemusic.ui.components.EditAlbumNameDialog
 import com.example.offlinemusic.ui.components.EqualizerBars
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AlbumDetailScreen(
     album: Album,
@@ -63,15 +65,26 @@ fun AlbumDetailScreen(
     onSongClick: (Song, List<Song>) -> Unit,
     onPlayAllClick: () -> Unit,
     onShuffleAllClick: () -> Unit,
-    onAddSongsClick: () -> Unit,
-    onRemoveSongClick: (Song) -> Unit,
-    onMoveSongClick: (Song) -> Unit,
-    onAddToAnotherAlbumClick: (Song) -> Unit,
-    onDeleteAlbumClick: () -> Unit,
+    onEditAlbumName: (String) -> Unit = {},
+    onAddToPlaylistClick: (Song) -> Unit = {},
+    onEditSongClick: (Song) -> Unit = {},
+    onArtistClick: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showAlbumMenu by remember { mutableStateOf(false) }
-    val isLikedSpecial = album.id == MusicDatabase.ALBUM_ID_LIKED
+    var showEditAlbumNameDialog by remember { mutableStateOf(false) }
+
+    if (showEditAlbumNameDialog) {
+        EditAlbumNameDialog(
+            currentName = album.name,
+            songCount = album.songCount,
+            onDismiss = { showEditAlbumNameDialog = false },
+            onConfirm = { newName ->
+                showEditAlbumNameDialog = false
+                onEditAlbumName(newName)
+            }
+        )
+    }
 
     Column(
         modifier = modifier
@@ -96,8 +109,15 @@ fun AlbumDetailScreen(
                     )
                 }
                 Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.Default.Album,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (isLikedSpecial) "FAVORITES" else if (album.isCustom) "CUSTOM ALBUM" else "ALBUM",
+                    text = "OFFICIAL ALBUM",
                     style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -118,23 +138,13 @@ fun AlbumDetailScreen(
                     modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Add Songs to Album...", color = MaterialTheme.colorScheme.onSurface) },
-                        leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        text = { Text("Edit Album Name...", color = MaterialTheme.colorScheme.onSurface) },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         onClick = {
                             showAlbumMenu = false
-                            onAddSongsClick()
+                            showEditAlbumNameDialog = true
                         }
                     )
-                    if (album.isCustom && !isLikedSpecial) {
-                        DropdownMenuItem(
-                            text = { Text("Delete Album", color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                            onClick = {
-                                showAlbumMenu = false
-                                onDeleteAlbumClick()
-                            }
-                        )
-                    }
                 }
             }
         }
@@ -161,20 +171,29 @@ fun AlbumDetailScreen(
                             artworkUri = album.artworkUri,
                             size = 190.dp,
                             shape = RoundedCornerShape(20.dp),
-                            isLikedSongsSpecial = isLikedSpecial,
                             modifier = Modifier.fillMaxSize()
                         )
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Album Name
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Album Name with Edit icon (and double-click to rename)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .combinedClickable(
+                                onDoubleClick = { showEditAlbumNameDialog = true },
+                                onClick = {}
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
                         Icon(
-                            imageVector = if (isLikedSpecial) Icons.Filled.Favorite else Icons.Default.Folder,
+                            imageVector = Icons.Default.Album,
                             contentDescription = null,
-                            tint = if (isLikedSpecial) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
@@ -184,7 +203,25 @@ fun AlbumDetailScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        IconButton(
+                            onClick = { showEditAlbumNameDialog = true },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit Album Name",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
+
+                    Text(
+                        text = "Double-tap name to rename",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
 
                     Spacer(modifier = Modifier.height(4.dp))
 
@@ -204,7 +241,7 @@ fun AlbumDetailScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Action Buttons: Play, Shuffle, Add Songs
+                    // Action Buttons: Play, Shuffle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -241,46 +278,52 @@ fun AlbumDetailScreen(
                             Icon(
                                 imageVector = Icons.Default.Shuffle,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(text = "SHUFFLE", fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onBackground)
-                        }
-
-                        OutlinedButton(
-                            onClick = onAddSongsClick,
-                            shape = RoundedCornerShape(24.dp),
-                            modifier = Modifier.height(46.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Text(text = "SHUFFLE", fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         }
                     }
                 }
             }
 
+            // Songs Header
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "TRACKS",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.5.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${album.songs.size} items",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Empty state
             if (album.songs.isEmpty()) {
                 item {
-                    Column(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 40.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "This album is empty",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Tap '+ Add Songs' above to add music to this album.",
-                            style = MaterialTheme.typography.bodySmall,
+                            text = "No tracks in this album",
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -295,46 +338,54 @@ fun AlbumDetailScreen(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
                             .background(
-                                if (isCurrent) MaterialTheme.colorScheme.surfaceVariant
-                                else MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
-                            )
-                            .border(
-                                1.dp,
-                                if (isCurrent) MaterialTheme.colorScheme.outline
-                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
-                                RoundedCornerShape(12.dp)
+                                if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                             )
                             .clickable { onSongClick(song, album.songs) }
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "${index + 1}",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.width(26.dp)
-                        )
+                        // Track index / Equalizer
+                        Box(
+                            modifier = Modifier.size(28.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isCurrent && isPlaying) {
+                                EqualizerBars(modifier = Modifier.size(18.dp))
+                            } else {
+                                Text(
+                                    text = "${index + 1}",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
 
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Artwork Thumbnail
                         ArtworkView(
                             artworkUri = song.artworkUri,
-                            size = 38.dp,
-                            shape = RoundedCornerShape(6.dp)
+                            size = 44.dp,
+                            shape = RoundedCornerShape(8.dp)
                         )
 
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
 
+                        // Title & Artist
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = song.title,
                                 style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.SemiBold
                                 ),
-                                color = MaterialTheme.colorScheme.onSurface,
+                                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "${song.artist} • ${song.formattedDuration}",
+                                text = song.artist,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -342,12 +393,16 @@ fun AlbumDetailScreen(
                             )
                         }
 
-                        if (isCurrent && isPlaying) {
-                            EqualizerBars()
-                            Spacer(modifier = Modifier.width(6.dp))
-                        }
+                        // Duration
+                        Text(
+                            text = song.formattedDuration,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
 
-                        // 3-dots popup menu
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        // 3-dot dropdown menu
                         Box {
                             IconButton(
                                 onClick = { songMenuExpanded = true },
@@ -367,26 +422,44 @@ fun AlbumDetailScreen(
                                 modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Add to another Album...", color = MaterialTheme.colorScheme.onSurface) },
+                                    text = { Text("Edit Song Info...", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                     onClick = {
                                         songMenuExpanded = false
-                                        onAddToAnotherAlbumClick(song)
+                                        onEditSongClick(song)
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Move to another Album...", color = MaterialTheme.colorScheme.onSurface) },
+                                    text = { Text("Add to Playlist...", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                     onClick = {
                                         songMenuExpanded = false
-                                        onMoveSongClick(song)
+                                        onAddToPlaylistClick(song)
                                     }
                                 )
-                                DropdownMenuItem(
-                                    text = { Text(if (isLikedSpecial) "Unlike (Remove from Liked)" else "Remove from this Album", color = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        songMenuExpanded = false
-                                        onRemoveSongClick(song)
+
+                                val songArtists = song.artist.split(",", "/", ";", "\\")
+                                    .map { it.trim() }
+                                    .filter { it.isNotEmpty() }
+                                if (songArtists.size <= 1) {
+                                    DropdownMenuItem(
+                                        text = { Text("View Artist Profile", color = MaterialTheme.colorScheme.onSurface) },
+                                        onClick = {
+                                            songMenuExpanded = false
+                                            onArtistClick(songArtists.firstOrNull() ?: song.artist)
+                                        }
+                                    )
+                                } else {
+                                    songArtists.forEach { individualArtist ->
+                                        DropdownMenuItem(
+                                            text = { Text("Artist: $individualArtist", color = MaterialTheme.colorScheme.onSurface) },
+                                            onClick = {
+                                                songMenuExpanded = false
+                                                onArtistClick(individualArtist)
+                                            }
+                                        )
                                     }
-                                )
+                                }
                             }
                         }
                     }

@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.jetbrainsKotlinAndroid)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -69,6 +70,17 @@ dependencies {
 
     // Storage Access Framework DocumentFile
     implementation(libs.androidx.documentfile)
+
+    // Room Database & KSP Compiler
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+
+    // WorkManager (Background processing & metadata enrichment)
+    implementation(libs.androidx.work.runtime.ktx)
+
+    // MP3 ID3 Tag manipulation
+    implementation(libs.mp3agic)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

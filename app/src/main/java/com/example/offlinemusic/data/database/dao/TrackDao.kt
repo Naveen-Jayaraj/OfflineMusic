@@ -69,6 +69,9 @@ interface TrackDao {
     @Query("UPDATE tracks SET play_count = play_count + 1, last_played_timestamp = :timestamp WHERE id = :trackId")
     suspend fun incrementPlayCount(trackId: String, timestamp: Long)
 
+    @Query("UPDATE tracks SET album_id = :newAlbumId WHERE album_id = :oldAlbumId")
+    suspend fun updateAlbumForTracks(oldAlbumId: String, newAlbumId: String): Int
+
     @Query("DELETE FROM tracks WHERE id = :trackId")
     suspend fun deleteTrackById(trackId: String)
 

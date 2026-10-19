@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.offlinemusic.data.database.MusicDatabase
 import com.example.offlinemusic.data.model.Album
 import com.example.offlinemusic.data.model.ArtistProfile
+import com.example.offlinemusic.data.model.Playlist
 import com.example.offlinemusic.data.model.Song
 import com.example.offlinemusic.data.model.SortBy
 import com.example.offlinemusic.data.model.SortOption
@@ -14,6 +15,11 @@ import com.example.offlinemusic.data.model.SortOrder
 import com.example.offlinemusic.data.repository.MusicPreferences
 import com.example.offlinemusic.data.repository.MusicScanner
 import com.example.offlinemusic.player.MusicPlayerManager
+import com.example.offlinemusic.data.database.entities.ArtistEntity
+import com.example.offlinemusic.data.repository.ArtistNormalizer
+import com.example.offlinemusic.ui.components.ArtistReviewPromptData
+import com.example.offlinemusic.ui.navigation.BottomNavTab
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +31,7 @@ import kotlinx.coroutines.launch
 data class SearchResults(
     val songs: List<Song> = emptyList(),
     val artists: List<String> = emptyList(),
+    val playlists: List<Playlist> = emptyList(),
     val albums: List<Album> = emptyList()
 )
 
@@ -46,11 +53,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
     val allSongs: StateFlow<List<Song>> = _allSongs.asStateFlow()
 
+    private val _allPlaylists = MutableStateFlow<List<Playlist>>(emptyList())
+    val allPlaylists: StateFlow<List<Playlist>> = _allPlaylists.asStateFlow()
+
     private val _allAlbums = MutableStateFlow<List<Album>>(emptyList())
     val allAlbums: StateFlow<List<Album>> = _allAlbums.asStateFlow()
 
+    private val _allArtists = MutableStateFlow<List<ArtistEntity>>(emptyList())
+    val allArtists: StateFlow<List<ArtistEntity>> = _allArtists.asStateFlow()
+
+    private val _pendingReviewCount = MutableStateFlow(0)
+    val pendingReviewCount: StateFlow<Int> = _pendingReviewCount.asStateFlow()
+
+    private val _currentArtistReview = MutableStateFlow<ArtistReviewPromptData?>(null)
+    val currentArtistReview: StateFlow<ArtistReviewPromptData?> = _currentArtistReview.asStateFlow()
+
+    private var lastPromptActionTime = 0L
+    private val PROMPT_COOLDOWN_MS = 60_000L // 60 seconds minimum between automatic popups
+
     private val _likedSongIds = MutableStateFlow<Set<String>>(emptySet())
     val likedSongIds: StateFlow<Set<String>> = _likedSongIds.asStateFlow()
+
+    private val _currentTab = MutableStateFlow(BottomNavTab.HOME)
+    val currentTab: StateFlow<BottomNavTab> = _currentTab.asStateFlow()
+
+    private val _recentSearches = MutableStateFlow(preferences.getRecentSearches())
+    val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -58,11 +86,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _sortOption = MutableStateFlow(preferences.sortOption)
     val sortOption: StateFlow<SortOption> = _sortOption.asStateFlow()
 
+    private val _selectedPlaylistDetail = MutableStateFlow<Playlist?>(null)
+    val selectedPlaylistDetail: StateFlow<Playlist?> = _selectedPlaylistDetail.asStateFlow()
+
     private val _selectedAlbumDetail = MutableStateFlow<Album?>(null)
     val selectedAlbumDetail: StateFlow<Album?> = _selectedAlbumDetail.asStateFlow()
 
     private val _selectedArtistProfile = MutableStateFlow<ArtistProfile?>(null)
     val selectedArtistProfile: StateFlow<ArtistProfile?> = _selectedArtistProfile.asStateFlow()
+
+    private val _songForEditMetadata = MutableStateFlow<Song?>(null)
+    val songForEditMetadata: StateFlow<Song?> = _songForEditMetadata.asStateFlow()
 
     private val _isFullPlayerVisible = MutableStateFlow(false)
     val isFullPlayerVisible: StateFlow<Boolean> = _isFullPlayerVisible.asStateFlow()
@@ -76,7 +110,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedGenreFilter = MutableStateFlow<String?>(null)
     val selectedGenreFilter: StateFlow<String?> = _selectedGenreFilter.asStateFlow()
 
-    // Filtered Albums for main Spotify-style view
+    // Filtered Playlists for main Spotify-style view (Home Screen)
+    val filteredPlaylists: StateFlow<List<Playlist>> = combine(
+        _allPlaylists,
+        _searchQuery,
+        _sortOption
+    ) { playlists, query, sort ->
+        val filtered = if (query.isBlank()) {
+            playlists
+        } else {
+            val q = query.trim().lowercase()
+            playlists.filter { it.name.lowercase().contains(q) || (it.description?.lowercase()?.contains(q) == true) }
+        }
+
+        // Liked Songs always appears first
+        val liked = filtered.filter { it.isLikedSpecial }
+        val others = filtered.filter { !it.isLikedSpecial }
+
+        val sortedOthers = when (sort.sortBy) {
+            SortBy.TITLE, SortBy.ALBUM -> {
+                if (sort.sortOrder == SortOrder.DESCENDING) {
+                    others.sortedByDescending { it.name.lowercase() }
+                } else {
+                    others.sortedBy { it.name.lowercase() }
+                }
+            }
+            SortBy.DURATION -> {
+                if (sort.sortOrder == SortOrder.DESCENDING) {
+                    others.sortedByDescending { it.totalDurationMs }
+                } else {
+                    others.sortedBy { it.totalDurationMs }
+                }
+            }
+            else -> {
+                if (sort.sortOrder == SortOrder.DESCENDING) {
+                    others.sortedByDescending { it.songCount }
+                } else {
+                    others.sortedBy { it.songCount }
+                }
+            }
+        }
+        liked + sortedOthers
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Filtered Albums for albums listing / search
     val filteredAlbums: StateFlow<List<Album>> = combine(
         _allAlbums,
         _searchQuery,
@@ -115,12 +192,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         result
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Search Results categorized into Songs, Artists, Albums
+    // Search Results categorized into Songs, Artists, Playlists, Albums
     val searchResults: StateFlow<SearchResults> = combine(
         _allSongs,
+        _allPlaylists,
         _allAlbums,
+        _allArtists,
         _searchQuery
-    ) { songs, albums, query ->
+    ) { songs, playlists, albums, artists, query ->
         if (query.isBlank()) {
             SearchResults()
         } else {
@@ -133,10 +212,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         it.albumFolder.lowercase().contains(q)
             }
 
-            val matchedArtists = songs.map { it.artist }
+            val matchedArtists = artists
+                .filter { it.name.lowercase().contains(q) }
+                .map { it.name }
                 .distinct()
-                .filter { it.lowercase().contains(q) }
                 .sortedWith(String.CASE_INSENSITIVE_ORDER)
+
+            val matchedPlaylists = playlists.filter {
+                it.name.lowercase().contains(q) || (it.description?.lowercase()?.contains(q) == true)
+            }
 
             val matchedAlbums = albums.filter {
                 it.name.lowercase().contains(q) || it.artistSummary.lowercase().contains(q)
@@ -145,6 +229,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             SearchResults(
                 songs = matchedSongs,
                 artists = matchedArtists,
+                playlists = matchedPlaylists,
                 albums = matchedAlbums
             )
         }
@@ -159,8 +244,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
+        // Clean zero-song artists, normalize existing artist profiles, and sync folder/liked playlists on startup
         viewModelScope.launch {
-            _likedSongIds.value = scanner.getLikedSongIds()
+            scanner.repository.normalizeAndCleanArtistProfiles()
+            scanner.repository.syncFolderAndLikedPlaylists()
+        }
+
+        // Collect reactive Room flows
+        viewModelScope.launch {
+            scanner.repository.allTracks.collect { tracks ->
+                _allSongs.value = tracks
+            }
+        }
+        viewModelScope.launch {
+            scanner.repository.allPlaylists.collect { playlists ->
+                _allPlaylists.value = playlists
+            }
+        }
+        viewModelScope.launch {
+            scanner.repository.allAlbums.collect { albums ->
+                _allAlbums.value = albums
+            }
+        }
+        viewModelScope.launch {
+            scanner.repository.likedTrackIds.collect { likedIds ->
+                _likedSongIds.value = likedIds
+            }
+        }
+        viewModelScope.launch {
+            scanner.repository.allArtists.collect { artists ->
+                _allArtists.value = artists
+            }
+        }
+        viewModelScope.launch {
+            scanner.repository.pendingReviewCount.collect { count ->
+                _pendingReviewCount.value = count
+            }
         }
         val savedUri = preferences.selectedFolderUri
         if (savedUri != null) {
@@ -209,7 +328,137 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Keep existing on error
             } finally {
                 _isLoading.value = false
+                // Gentle follow-up check: Wait 2.5s after scan completes so user can see their music first
+                delay(2500)
+                checkAndPresentNextReview(force = false)
             }
+        }
+    }
+
+    fun checkAndPresentNextReview(force: Boolean = false) {
+        viewModelScope.launch {
+            if (_isLoading.value) return@launch
+            if (_currentArtistReview.value != null) return@launch
+            val now = System.currentTimeMillis()
+            if (!force && (now - lastPromptActionTime < PROMPT_COOLDOWN_MS)) return@launch
+
+            val review = scanner.repository.getOldestPendingReview() ?: return@launch
+            val normRaw = ArtistNormalizer.normalize(review.rawCreditedString)
+            val existingList = _allArtists.value
+
+            // 1. If an exact match while normalized already exists in library, auto-resolve immediately!
+            val exactMatch = existingList.firstOrNull { it.normalizedName == normRaw }
+            if (exactMatch != null) {
+                scanner.repository.resolveArtistReviewWithExisting(review.id, review.rawCreditedString, exactMatch.id)
+                checkAndPresentNextReview(force = force)
+                return@launch
+            }
+
+            // 2. Filter candidate matches: MUST NOT be exact match while normalized
+            val suggestedNames = review.suggestedArtistIds.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val candidateMatches = existingList.filter { artist ->
+                artist.normalizedName != normRaw && (
+                    artist.name in suggestedNames ||
+                    ArtistNormalizer.similarity(artist.normalizedName, normRaw) in 0.65f..0.99f
+                )
+            }.take(3)
+
+            // 3. If there are no candidate near-matches at all, auto-resolve cleanly as a new artist without interrupting user
+            if (candidateMatches.isEmpty()) {
+                val resolvedName = ArtistNormalizer.resolveCanonicalName(review.rawCreditedString)
+                scanner.repository.resolveArtistReviewWithNew(review.id, review.rawCreditedString, resolvedName)
+                checkAndPresentNextReview(force = force)
+                return@launch
+            }
+
+            val track = scanner.repository.getTrackByIdRaw(review.trackId)
+            val trackTitle = track?.title ?: "Unknown Track"
+
+            _currentArtistReview.value = ArtistReviewPromptData(
+                reviewId = review.id,
+                trackId = review.trackId,
+                trackTitle = trackTitle,
+                rawCreditedString = review.rawCreditedString,
+                suggestedNewName = ArtistNormalizer.resolveCanonicalName(review.rawCreditedString),
+                candidateMatches = candidateMatches
+            )
+            lastPromptActionTime = now
+        }
+    }
+
+    fun triggerManualReview() {
+        checkAndPresentNextReview(force = true)
+    }
+
+    fun resolveArtistReviewWithExisting(
+        reviewId: String,
+        rawCreditedString: String,
+        existingArtistId: String
+    ) {
+        viewModelScope.launch {
+            _currentArtistReview.value = null
+            lastPromptActionTime = System.currentTimeMillis()
+            scanner.repository.resolveArtistReviewWithExisting(reviewId, rawCreditedString, existingArtistId)
+            refreshAlbums()
+        }
+    }
+
+    fun resolveArtistReviewWithNew(
+        reviewId: String,
+        rawCreditedString: String,
+        newArtistName: String
+    ) {
+        viewModelScope.launch {
+            _currentArtistReview.value = null
+            lastPromptActionTime = System.currentTimeMillis()
+            scanner.repository.resolveArtistReviewWithNew(reviewId, rawCreditedString, newArtistName)
+            refreshAlbums()
+        }
+    }
+
+    fun skipArtistReview(@Suppress("UNUSED_PARAMETER") reviewId: String) {
+        _currentArtistReview.value = null
+        lastPromptActionTime = System.currentTimeMillis()
+    }
+
+    fun dismissArtistReviewForever(reviewId: String) {
+        viewModelScope.launch {
+            _currentArtistReview.value = null
+            lastPromptActionTime = System.currentTimeMillis()
+            scanner.repository.dismissArtistReviewForever(reviewId)
+        }
+    }
+
+    fun selectTab(tab: BottomNavTab) {
+        _currentTab.value = tab
+    }
+
+    fun addRecentSearch(query: String) {
+        if (query.isBlank()) return
+        preferences.addRecentSearch(query)
+        _recentSearches.value = preferences.getRecentSearches()
+    }
+
+    fun removeRecentSearch(query: String) {
+        preferences.removeRecentSearch(query)
+        _recentSearches.value = preferences.getRecentSearches()
+    }
+
+    fun clearRecentSearches() {
+        preferences.clearRecentSearches()
+        _recentSearches.value = emptyList()
+    }
+
+    fun clearFolder() {
+        preferences.clearFolder()
+        _selectedFolderUri.value = null
+        _selectedFolderName.value = null
+        _allSongs.value = emptyList()
+        _allPlaylists.value = emptyList()
+        _allAlbums.value = emptyList()
+        _allArtists.value = emptyList()
+        viewModelScope.launch {
+            scanner.clearCache()
         }
     }
 
@@ -230,6 +479,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedGenreFilter.value = if (_selectedGenreFilter.value == genre) null else genre
     }
 
+    fun openPlaylistDetail(playlist: Playlist) {
+        _selectedPlaylistDetail.value = playlist
+        viewModelScope.launch {
+            val full = scanner.repository.getPlaylistWithSongs(playlist.id)
+            if (full != null) {
+                _selectedPlaylistDetail.value = full
+            }
+        }
+    }
+
+    fun closePlaylistDetail() {
+        _selectedPlaylistDetail.value = null
+    }
+
     fun openAlbumDetail(album: Album) {
         viewModelScope.launch {
             val albumWithSongs = scanner.getAlbumWithSongs(album.id) ?: album
@@ -239,6 +502,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeAlbumDetail() {
         _selectedAlbumDetail.value = null
+    }
+
+    fun updateAlbumName(albumId: String, newName: String) {
+        viewModelScope.launch {
+            val updated = scanner.repository.updateAlbumName(albumId, newName)
+            if (updated != null) {
+                _selectedAlbumDetail.value = updated
+            }
+            refreshAlbums()
+        }
     }
 
     fun openArtistProfile(artistName: String) {
@@ -252,63 +525,130 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedArtistProfile.value = null
     }
 
-    fun createCustomAlbum(name: String) {
+    fun createPlaylist(name: String) {
         viewModelScope.launch {
-            scanner.createCustomAlbum(name)
-            refreshAlbums()
-        }
-    }
-
-    fun deleteAlbum(albumId: String) {
-        viewModelScope.launch {
-            scanner.deleteAlbum(albumId)
-            if (_selectedAlbumDetail.value?.id == albumId) {
-                _selectedAlbumDetail.value = null
+            val id = scanner.repository.createPlaylist(name)
+            val full = scanner.repository.getPlaylistWithSongs(id)
+            if (full != null) {
+                openPlaylistDetail(full)
             }
-            refreshAlbums()
         }
     }
 
-    fun addSongsToAlbum(albumId: String, songIds: List<String>) {
+    fun createCustomAlbum(name: String) = createPlaylist(name)
+
+    fun deletePlaylist(playlistId: String) {
+        viewModelScope.launch {
+            scanner.repository.deletePlaylist(playlistId)
+            if (_selectedPlaylistDetail.value?.id == playlistId) {
+                closePlaylistDetail()
+            }
+        }
+    }
+
+    fun deleteAlbum(albumId: String) = deletePlaylist(albumId)
+
+    fun addSongsToPlaylist(playlistId: String, songIds: List<String>) {
         if (songIds.isEmpty()) return
         viewModelScope.launch {
-            scanner.addSongsToAlbum(albumId, songIds)
-            refreshAlbums()
-            if (_selectedAlbumDetail.value?.id == albumId) {
-                _selectedAlbumDetail.value = scanner.getAlbumWithSongs(albumId)
+            scanner.repository.addSongsToPlaylist(playlistId, songIds)
+            val updated = scanner.repository.getPlaylistWithSongs(playlistId)
+            if (_selectedPlaylistDetail.value?.id == playlistId && updated != null) {
+                _selectedPlaylistDetail.value = updated
             }
         }
     }
 
-    fun addSongToAlbum(albumId: String, songId: String) {
+    fun addSongToPlaylist(playlistId: String, songId: String) {
+        addSongsToPlaylist(playlistId, listOf(songId))
+    }
+
+    fun removeSongFromPlaylist(playlistId: String, songId: String) {
         viewModelScope.launch {
-            scanner.addSongToAlbum(albumId, songId)
-            if (albumId == MusicDatabase.ALBUM_ID_LIKED) {
-                val current = _likedSongIds.value.toMutableSet()
-                current.add(songId)
-                _likedSongIds.value = current
-            }
-            refreshAlbums()
-            if (_selectedAlbumDetail.value?.id == albumId) {
-                _selectedAlbumDetail.value = scanner.getAlbumWithSongs(albumId)
+            scanner.repository.removeSongFromPlaylist(playlistId, songId)
+            val updated = scanner.repository.getPlaylistWithSongs(playlistId)
+            if (_selectedPlaylistDetail.value?.id == playlistId && updated != null) {
+                _selectedPlaylistDetail.value = updated
             }
         }
     }
 
-    fun removeSongFromAlbum(albumId: String, songId: String) {
+    fun updatePlaylistName(playlistId: String, newName: String) {
         viewModelScope.launch {
-            scanner.removeSongFromAlbum(albumId, songId)
-            if (albumId == MusicDatabase.ALBUM_ID_LIKED) {
-                val current = _likedSongIds.value.toMutableSet()
-                current.remove(songId)
-                _likedSongIds.value = current
-            }
-            refreshAlbums()
-            if (_selectedAlbumDetail.value?.id == albumId) {
-                _selectedAlbumDetail.value = scanner.getAlbumWithSongs(albumId)
+            scanner.repository.updatePlaylistName(playlistId, newName)
+            val updated = scanner.repository.getPlaylistWithSongs(playlistId)
+            if (_selectedPlaylistDetail.value?.id == playlistId && updated != null) {
+                _selectedPlaylistDetail.value = updated
             }
         }
     }
+
+    fun updatePlaylistArtwork(playlistId: String, artworkUri: Uri?) {
+        viewModelScope.launch {
+            scanner.repository.updatePlaylistArtwork(playlistId, artworkUri)
+            val updated = scanner.repository.getPlaylistWithSongs(playlistId)
+            if (_selectedPlaylistDetail.value?.id == playlistId && updated != null) {
+                _selectedPlaylistDetail.value = updated
+            }
+        }
+    }
+
+    fun playPlaylist(playlist: Playlist) {
+        viewModelScope.launch {
+            val full = if (playlist.songs.isEmpty()) scanner.repository.getPlaylistWithSongs(playlist.id) ?: playlist else playlist
+            if (full.songs.isNotEmpty()) {
+                playerManager.playSong(full.songs.first(), full.songs)
+            }
+        }
+    }
+
+    fun shufflePlaylist(playlist: Playlist) {
+        viewModelScope.launch {
+            val full = if (playlist.songs.isEmpty()) scanner.repository.getPlaylistWithSongs(playlist.id) ?: playlist else playlist
+            if (full.songs.isNotEmpty()) {
+                val shuffled = full.songs.shuffled()
+                playerManager.playSong(shuffled.first(), shuffled)
+            }
+        }
+    }
+
+    fun openMetadataEditor(song: Song) {
+        _songForEditMetadata.value = song
+    }
+
+    fun closeMetadataEditor() {
+        _songForEditMetadata.value = null
+    }
+
+    fun updateTrackMetadata(
+        trackId: String,
+        newTitle: String,
+        rawArtistString: String,
+        newAlbum: String?,
+        newGenre: String?,
+        newArtworkUri: Uri?
+    ) {
+        viewModelScope.launch {
+            val updatedSong = scanner.updateTrackMetadata(trackId, newTitle, rawArtistString, newAlbum, newGenre, newArtworkUri)
+            if (updatedSong != null) {
+                playerManager.updateSongMetadata(updatedSong)
+                if (_selectedAlbumDetail.value != null) {
+                    _selectedAlbumDetail.value = scanner.getAlbumWithSongs(_selectedAlbumDetail.value!!.id)
+                }
+                if (_selectedPlaylistDetail.value != null) {
+                    _selectedPlaylistDetail.value = scanner.repository.getPlaylistWithSongs(_selectedPlaylistDetail.value!!.id)
+                }
+            }
+            _songForEditMetadata.value = null
+            refreshAlbums()
+        }
+    }
+
+    fun addSongsToAlbum(albumId: String, songIds: List<String>) = addSongsToPlaylist(albumId, songIds)
+
+    fun addSongToAlbum(albumId: String, songId: String) = addSongToPlaylist(albumId, songId)
+
+    fun removeSongFromAlbum(albumId: String, songId: String) = removeSongFromPlaylist(albumId, songId)
 
     fun toggleLikeSong(songId: String) {
         viewModelScope.launch {
@@ -338,7 +678,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun refreshAlbums() {
-        val albums = scanner.database.getAllAlbums()
+        val albums = scanner.repository.getAllAlbumsList()
         _allAlbums.value = albums
     }
 

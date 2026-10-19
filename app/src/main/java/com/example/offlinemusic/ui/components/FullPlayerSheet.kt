@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Folder
@@ -79,7 +80,7 @@ fun FullPlayerSheet(
     queue: List<Song>,
     isLiked: Boolean,
     onToggleLike: () -> Unit,
-    onAddToAlbumClick: () -> Unit,
+    onAddToPlaylistClick: () -> Unit,
     onPlayPauseClick: () -> Unit,
     onSkipNextClick: () -> Unit,
     onSkipPreviousClick: () -> Unit,
@@ -89,6 +90,7 @@ fun FullPlayerSheet(
     onStopClick: () -> Unit,
     onPlayQueueIndex: (Int) -> Unit,
     onDismiss: () -> Unit,
+    onEditMetadataClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
@@ -145,13 +147,23 @@ fun FullPlayerSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                IconButton(onClick = { isQueueVisible = !isQueueVisible }) {
-                    Icon(
-                        imageVector = Icons.Default.QueueMusic,
-                        contentDescription = "Queue",
-                        tint = if (isQueueVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(24.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onEditMetadataClick) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit Song Info",
+                            tint = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    IconButton(onClick = { isQueueVisible = !isQueueVisible }) {
+                        Icon(
+                            imageVector = Icons.Default.QueueMusic,
+                            contentDescription = "Queue",
+                            tint = if (isQueueVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
 
@@ -224,7 +236,7 @@ fun FullPlayerSheet(
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             // Add to Playlist Button
-                            IconButton(onClick = onAddToAlbumClick) {
+                            IconButton(onClick = onAddToPlaylistClick) {
                                 Icon(
                                     imageVector = Icons.Default.PlaylistAdd,
                                     contentDescription = "Add to Playlist",
