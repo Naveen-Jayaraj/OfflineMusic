@@ -1,16 +1,15 @@
 package com.example.offlinemusic.ui.components
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,11 +22,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.offlinemusic.ui.ArtistGroup
 
 @Composable
 fun ArtistCard(
-    artistGroup: ArtistGroup,
+    artistName: String,
+    songCount: Int? = null,
+    artworkUri: Uri? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -42,7 +42,7 @@ fun ArtistCard(
         verticalAlignment = Alignment.CenterVertically
     ) {
         ArtworkView(
-            artworkUri = artistGroup.artworkUri,
+            artworkUri = artworkUri,
             size = 48.dp,
             shape = CircleShape
         )
@@ -51,20 +51,21 @@ fun ArtistCard(
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = artistGroup.name,
+                text = artistName,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(modifier = Modifier.height(2.dp))
-
-            Text(
-                text = "${artistGroup.songCount} ${if (artistGroup.songCount == 1) "song" else "songs"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (songCount != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "$songCount ${if (songCount == 1) "song" else "songs"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

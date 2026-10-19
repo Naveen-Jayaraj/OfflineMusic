@@ -14,7 +14,9 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
 
     companion object {
         private const val DATABASE_NAME = "offline_music.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
+
+        const val ALBUM_ID_LIKED = "liked_songs"
 
         private const val TABLE_SONGS = "songs"
         private const val COL_SONG_ID = "id"
@@ -31,6 +33,7 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
         private const val COL_RELATIVE_PATH = "relative_path"
         private const val COL_TRACK_NUMBER = "track_number"
         private const val COL_ARTWORK_URI = "artwork_uri"
+        private const val COL_IS_LIKED = "is_liked"
 
         private const val TABLE_ALBUMS = "albums"
         private const val COL_ALBUM_ID = "id"
@@ -62,7 +65,8 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
                 $COL_DATE_MODIFIED INTEGER NOT NULL,
                 $COL_RELATIVE_PATH TEXT NOT NULL,
                 $COL_TRACK_NUMBER INTEGER,
-                $COL_ARTWORK_URI TEXT
+                $COL_ARTWORK_URI TEXT,
+                $COL_IS_LIKED INTEGER DEFAULT 0
             )
         """.trimIndent())
 
@@ -90,13 +94,35 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
         db.execSQL("CREATE INDEX idx_songs_title ON $TABLE_SONGS ($COL_TITLE)")
         db.execSQL("CREATE INDEX idx_album_songs_album ON $TABLE_ALBUM_SONGS ($COL_AS_ALBUM_ID)")
         db.execSQL("CREATE INDEX idx_album_songs_song ON $TABLE_ALBUM_SONGS ($COL_AS_SONG_ID)")
+
+        ensureLikedSongsAlbum(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_ALBUM_SONGS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_ALBUMS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_SONGS")
-        onCreate(db)
+        if (oldVersion < 2) {
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_ALBUM_SONGS")
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_ALBUMS")
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_SONGS")
+            onCreate(db)
+            return
+        }
+        if (oldVersion < 3) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_SONGS ADD COLUMN $COL_IS_LIKED INTEGER DEFAULT 0")
+            } catch (_: Exception) {}
+            ensureLikedSongsAlbum(db)
+        }
+    }
+
+    private fun ensureLikedSongsAlbum(db: SQLiteDatabase) {
+        val likedValues = ContentValues().apply {
+            put(COL_ALBUM_ID, ALBUM_ID_LIKED)
+            put(COL_ALBUM_NAME, "Liked Songs")
+            put(COL_FOLDER_PATH, "Favorites")
+            put(COL_IS_CUSTOM, 1)
+            put(COL_CREATED_AT, 0L)
+        }
+        db.insertWithOnConflict(TABLE_ALBUMS, null, likedValues, SQLiteDatabase.CONFLICT_IGNORE)
     }
 
     fun getAllSongs(): List<Song> {
@@ -109,6 +135,17 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
             }
         }
         return songs
+    }
+
+    fun getSongById(songId: String): Song? {
+        val db = readableDatabase
+        val cursor = db.query(TABLE_SONGS, null, "$COL_SONG_ID = ?", arrayOf(songId), null, null, null)
+        cursor.use { c ->
+            if (c.moveToNext()) {
+                return cursorToSong(c)
+            }
+        }
+        return null
     }
 
     data class CachedFileInfo(val song: Song, val dateModified: Long, val sizeBytes: Long)
@@ -124,6 +161,8 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
     fun getAllAlbums(): List<Album> {
         val albums = mutableListOf<Album>()
         val db = readableDatabase
+        ensureLikedSongsAlbum(db)
+
         val query = """
             SELECT a.$COL_ALBUM_ID, a.$COL_ALBUM_NAME, a.$COL_FOLDER_PATH, a.$COL_ALBUM_ARTWORK, a.$COL_IS_CUSTOM,
                    COUNT(as_link.$COL_AS_SONG_ID) AS song_count,
@@ -132,7 +171,7 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
             LEFT JOIN $TABLE_ALBUM_SONGS as_link ON a.$COL_ALBUM_ID = as_link.$COL_AS_ALBUM_ID
             LEFT JOIN $TABLE_SONGS s ON as_link.$COL_AS_SONG_ID = s.$COL_SONG_ID
             GROUP BY a.$COL_ALBUM_ID
-            ORDER BY a.$COL_ALBUM_NAME COLLATE NOCASE ASC
+            ORDER BY CASE WHEN a.$COL_ALBUM_ID = '$ALBUM_ID_LIKED' THEN 0 ELSE 1 END, a.$COL_ALBUM_NAME COLLATE NOCASE ASC
         """.trimIndent()
 
         val cursor = db.rawQuery(query, null)
@@ -243,7 +282,7 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
             INNER JOIN $TABLE_SONGS s_match ON as_match.$COL_AS_SONG_ID = s_match.$COL_SONG_ID
             LEFT JOIN $TABLE_ALBUM_SONGS as_all ON a.$COL_ALBUM_ID = as_all.$COL_AS_ALBUM_ID
             LEFT JOIN $TABLE_SONGS s_all ON as_all.$COL_AS_SONG_ID = s_all.$COL_SONG_ID
-            WHERE s_match.$COL_ARTIST = ? COLLATE NOCASE
+            WHERE s_match.$COL_ARTIST = ? COLLATE NOCASE AND a.$COL_ALBUM_ID != '$ALBUM_ID_LIKED'
             GROUP BY a.$COL_ALBUM_ID
             ORDER BY a.$COL_ALBUM_NAME COLLATE NOCASE ASC
         """.trimIndent()
@@ -277,6 +316,88 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
         return albums
     }
 
+    fun getLikedSongIds(): Set<String> {
+        val set = mutableSetOf<String>()
+        val db = readableDatabase
+        val cursor = db.query(
+            TABLE_ALBUM_SONGS,
+            arrayOf(COL_AS_SONG_ID),
+            "$COL_AS_ALBUM_ID = ?",
+            arrayOf(ALBUM_ID_LIKED),
+            null, null, null
+        )
+        cursor.use { c ->
+            while (c.moveToNext()) {
+                set.add(c.getString(0))
+            }
+        }
+        return set
+    }
+
+    fun toggleLikeSong(songId: String): Boolean {
+        val db = writableDatabase
+        ensureLikedSongsAlbum(db)
+        db.beginTransaction()
+        try {
+            val cursor = db.query(
+                TABLE_ALBUM_SONGS,
+                arrayOf(COL_AS_SONG_ID),
+                "$COL_AS_ALBUM_ID = ? AND $COL_AS_SONG_ID = ?",
+                arrayOf(ALBUM_ID_LIKED, songId),
+                null, null, null
+            )
+            val alreadyLiked = cursor.moveToNext()
+            cursor.close()
+
+            val newLikedState = !alreadyLiked
+            if (newLikedState) {
+                val maxOrderCursor = db.rawQuery(
+                    "SELECT COALESCE(MAX($COL_TRACK_ORDER), 0) + 1 FROM $TABLE_ALBUM_SONGS WHERE $COL_AS_ALBUM_ID = ?",
+                    arrayOf(ALBUM_ID_LIKED)
+                )
+                val nextOrder = if (maxOrderCursor.moveToNext()) maxOrderCursor.getInt(0) else 1
+                maxOrderCursor.close()
+
+                val values = ContentValues().apply {
+                    put(COL_AS_ALBUM_ID, ALBUM_ID_LIKED)
+                    put(COL_AS_SONG_ID, songId)
+                    put(COL_TRACK_ORDER, nextOrder)
+                }
+                db.insertWithOnConflict(TABLE_ALBUM_SONGS, null, values, SQLiteDatabase.CONFLICT_IGNORE)
+
+                val songVal = ContentValues().apply { put(COL_IS_LIKED, 1) }
+                db.update(TABLE_SONGS, songVal, "$COL_SONG_ID = ?", arrayOf(songId))
+            } else {
+                db.delete(
+                    TABLE_ALBUM_SONGS,
+                    "$COL_AS_ALBUM_ID = ? AND $COL_AS_SONG_ID = ?",
+                    arrayOf(ALBUM_ID_LIKED, songId)
+                )
+                val songVal = ContentValues().apply { put(COL_IS_LIKED, 0) }
+                db.update(TABLE_SONGS, songVal, "$COL_SONG_ID = ?", arrayOf(songId))
+            }
+
+            db.setTransactionSuccessful()
+            return newLikedState
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun isSongLiked(songId: String): Boolean {
+        val db = readableDatabase
+        val cursor = db.query(
+            TABLE_ALBUM_SONGS,
+            arrayOf(COL_AS_SONG_ID),
+            "$COL_AS_ALBUM_ID = ? AND $COL_AS_SONG_ID = ?",
+            arrayOf(ALBUM_ID_LIKED, songId),
+            null, null, null
+        )
+        val exists = cursor.moveToNext()
+        cursor.close()
+        return exists
+    }
+
     fun createCustomAlbum(name: String): String {
         val albumId = "custom_${UUID.randomUUID()}"
         val db = writableDatabase
@@ -292,6 +413,7 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
     }
 
     fun deleteAlbum(albumId: String) {
+        if (albumId == ALBUM_ID_LIKED) return // Protect Liked Songs special album
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -303,34 +425,37 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
         }
     }
 
-    fun addSongToAlbum(albumId: String, songId: String) {
+    fun addSongsToAlbum(albumId: String, songIds: List<String>) {
+        if (songIds.isEmpty()) return
         val db = writableDatabase
         db.beginTransaction()
         try {
-            // Find max order
             val cursor = db.rawQuery(
-                "SELECT COALESCE(MAX($COL_TRACK_ORDER), 0) + 1 FROM $TABLE_ALBUM_SONGS WHERE $COL_AS_ALBUM_ID = ?",
+                "SELECT COALESCE(MAX($COL_TRACK_ORDER), 0) FROM $TABLE_ALBUM_SONGS WHERE $COL_AS_ALBUM_ID = ?",
                 arrayOf(albumId)
             )
-            val nextOrder = if (cursor.moveToNext()) cursor.getInt(0) else 1
+            var currentOrder = if (cursor.moveToNext()) cursor.getInt(0) else 0
             cursor.close()
 
-            val values = ContentValues().apply {
-                put(COL_AS_ALBUM_ID, albumId)
-                put(COL_AS_SONG_ID, songId)
-                put(COL_TRACK_ORDER, nextOrder)
+            for (songId in songIds) {
+                currentOrder++
+                val values = ContentValues().apply {
+                    put(COL_AS_ALBUM_ID, albumId)
+                    put(COL_AS_SONG_ID, songId)
+                    put(COL_TRACK_ORDER, currentOrder)
+                }
+                db.insertWithOnConflict(TABLE_ALBUM_SONGS, null, values, SQLiteDatabase.CONFLICT_IGNORE)
             }
-            db.insertWithOnConflict(TABLE_ALBUM_SONGS, null, values, SQLiteDatabase.CONFLICT_IGNORE)
 
-            // Update album art if empty
-            val songCursor = db.query(TABLE_SONGS, arrayOf(COL_ARTWORK_URI), "$COL_SONG_ID = ?", arrayOf(songId), null, null, null)
+            val firstSongId = songIds.first()
+            val songCursor = db.query(TABLE_SONGS, arrayOf(COL_ARTWORK_URI), "$COL_SONG_ID = ?", arrayOf(firstSongId), null, null, null)
             var songArt: String? = null
             if (songCursor.moveToNext()) {
                 songArt = songCursor.getString(0)
             }
             songCursor.close()
 
-            if (songArt != null) {
+            if (songArt != null && albumId != ALBUM_ID_LIKED) {
                 db.execSQL(
                     "UPDATE $TABLE_ALBUMS SET $COL_ALBUM_ARTWORK = ? WHERE $COL_ALBUM_ID = ? AND ($COL_ALBUM_ARTWORK IS NULL OR $COL_ALBUM_ARTWORK = '')",
                     arrayOf(songArt, albumId)
@@ -343,6 +468,10 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
         }
     }
 
+    fun addSongToAlbum(albumId: String, songId: String) {
+        addSongsToAlbum(albumId, listOf(songId))
+    }
+
     fun removeSongFromAlbum(albumId: String, songId: String) {
         val db = writableDatabase
         db.delete(
@@ -350,6 +479,10 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
             "$COL_AS_ALBUM_ID = ? AND $COL_AS_SONG_ID = ?",
             arrayOf(albumId, songId)
         )
+        if (albumId == ALBUM_ID_LIKED) {
+            val songVal = ContentValues().apply { put(COL_IS_LIKED, 0) }
+            db.update(TABLE_SONGS, songVal, "$COL_SONG_ID = ?", arrayOf(songId))
+        }
     }
 
     fun moveSongBetweenAlbums(songId: String, fromAlbumId: String, toAlbumId: String) {
@@ -371,6 +504,7 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
     fun insertOrUpdateScannedData(songs: List<Song>) {
         if (songs.isEmpty()) return
         val db = writableDatabase
+        ensureLikedSongsAlbum(db)
         db.beginTransaction()
         try {
             for (song in songs) {
@@ -448,8 +582,8 @@ class MusicDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME,
 
     fun clearAll() {
         val db = writableDatabase
-        db.delete(TABLE_ALBUM_SONGS, null, null)
-        db.delete(TABLE_ALBUMS, null, null)
+        db.delete(TABLE_ALBUM_SONGS, "$COL_AS_ALBUM_ID != ?", arrayOf(ALBUM_ID_LIKED))
+        db.delete(TABLE_ALBUMS, "$COL_ALBUM_ID != ?", arrayOf(ALBUM_ID_LIKED))
         db.delete(TABLE_SONGS, null, null)
     }
 

@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PlayArrow
+import com.example.offlinemusic.data.database.MusicDatabase
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +41,8 @@ fun AlbumCard(
     onPlayClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isLikedSpecial = album.id == MusicDatabase.ALBUM_ID_LIKED
+
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
@@ -47,6 +51,7 @@ fun AlbumCard(
             .clickable { onClick() }
             .padding(10.dp)
     ) {
+
         // Album Cover Container with Play button overlay
         Box(
             modifier = Modifier
@@ -57,6 +62,7 @@ fun AlbumCard(
             ArtworkView(
                 artworkUri = album.artworkUri,
                 shape = RoundedCornerShape(12.dp),
+                isLikedSongsSpecial = isLikedSpecial,
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
@@ -90,9 +96,9 @@ fun AlbumCard(
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Icon(
-                imageVector = Icons.Default.Folder,
+                imageVector = if (isLikedSpecial) Icons.Filled.Favorite else Icons.Default.Folder,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (isLikedSpecial) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(13.dp)
             )
             Text(

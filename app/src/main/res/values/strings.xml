@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Offline Music</string>
+    <string name="playback_channel_name">Music Playback</string>
+    <string name="playback_channel_description">Offline Music playback notifications and island controls</string>
 </resources>

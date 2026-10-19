@@ -2,12 +2,14 @@ package com.example.offlinemusic.player
 
 import android.content.ComponentName
 import android.content.Context
+import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.example.offlinemusic.data.database.MusicDatabase
 import com.example.offlinemusic.data.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,8 +21,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-class MusicPlayerManager(private val context: Context) {
+class MusicPlayerManager private constructor(private val context: Context) {
 
+    private val database = MusicDatabase(context)
     private var mediaController: MediaController? = null
     private val scope = CoroutineScope(Dispatchers.Main)
     private var progressJob: Job? = null
@@ -51,6 +54,17 @@ class MusicPlayerManager(private val context: Context) {
 
     private val songMap = mutableMapOf<String, Song>()
 
+    companion object {
+        @Volatile
+        private var INSTANCE: MusicPlayerManager? = null
+
+        fun getInstance(context: Context): MusicPlayerManager {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: MusicPlayerManager(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+    }
+
     init {
         connectToService()
     }
@@ -66,6 +80,15 @@ class MusicPlayerManager(private val context: Context) {
                     _isPlaying.value = isPlaying
                     _isShuffleEnabled.value = shuffleModeEnabled
                     _repeatMode.value = repeatMode
+
+                    // Restore state immediately upon connection (e.g. returning from background)
+                    val currentItem = currentMediaItem
+                    if (currentItem != null) {
+                        val song = resolveSong(currentItem)
+                        _currentSong.value = song
+                        _durationMs.value = if (duration > 0) duration else (song?.durationMs ?: 0L)
+                        _currentPositionMs.value = currentPosition.coerceAtLeast(0L)
+                    }
                 }
                 _isConnected.value = true
                 startProgressTracker()
@@ -73,6 +96,40 @@ class MusicPlayerManager(private val context: Context) {
                 _isConnected.value = false
             }
         }, ContextCompat.getMainExecutor(context))
+    }
+
+    private fun resolveSong(mediaItem: MediaItem?): Song? {
+        if (mediaItem == null) return null
+        val id = mediaItem.mediaId
+        if (id.isNotEmpty()) {
+            val cached = songMap[id]
+            if (cached != null) return cached
+            val fromDb = database.getSongById(id)
+            if (fromDb != null) {
+                songMap[id] = fromDb
+                return fromDb
+            }
+        }
+        val meta = mediaItem.mediaMetadata
+        val title = meta.title?.toString()
+        if (title != null) {
+            return Song(
+                id = id.ifEmpty { "unknown" },
+                title = title,
+                artist = meta.artist?.toString() ?: "Unknown Artist",
+                album = meta.albumTitle?.toString() ?: "Unknown Album",
+                albumFolder = meta.albumTitle?.toString() ?: "Music",
+                year = null,
+                genre = null,
+                durationMs = mediaController?.duration?.coerceAtLeast(0L) ?: 0L,
+                sizeBytes = 0L,
+                dateModified = 0L,
+                uri = mediaItem.requestMetadata.mediaUri ?: Uri.EMPTY,
+                relativePath = "",
+                artworkUri = meta.artworkUri
+            )
+        }
+        return null
     }
 
     private inner class PlayerListener : Player.Listener {
@@ -86,15 +143,17 @@ class MusicPlayerManager(private val context: Context) {
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            val id = mediaItem?.mediaId
-            val foundSong = if (id != null) songMap[id] else null
-            _currentSong.value = foundSong
-            _durationMs.value = foundSong?.durationMs ?: (mediaController?.duration?.coerceAtLeast(0L) ?: 0L)
+            val song = resolveSong(mediaItem)
+            _currentSong.value = song
+            _durationMs.value = song?.durationMs ?: (mediaController?.duration?.coerceAtLeast(0L) ?: 0L)
             _currentPositionMs.value = 0L
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_READY) {
+                if (_currentSong.value == null && mediaController?.currentMediaItem != null) {
+                    _currentSong.value = resolveSong(mediaController?.currentMediaItem)
+                }
                 val dur = mediaController?.duration ?: 0L
                 if (dur > 0L) {
                     _durationMs.value = dur
@@ -239,19 +298,32 @@ class MusicPlayerManager(private val context: Context) {
         stopProgressTracker()
     }
 
-    fun release() {
-        stopProgressTracker()
-        mediaController?.release()
-        mediaController = null
-        _isConnected.value = false
-    }
-
     private fun Song.toMediaItem(): MediaItem {
+        val safeArtworkUri = artworkUri?.let { uri ->
+            if (uri.scheme == "file" && uri.path != null) {
+                try {
+                    val file = java.io.File(uri.path!!)
+                    if (file.exists()) {
+                        androidx.core.content.FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            file
+                        )
+                    } else uri
+                } catch (e: Exception) {
+                    uri
+                }
+            } else {
+                uri
+            }
+        }
+
         val metadata = MediaMetadata.Builder()
             .setTitle(title)
             .setArtist(artist)
             .setAlbumTitle(album)
-            .setArtworkUri(artworkUri)
+            .setArtworkUri(safeArtworkUri)
+            .setIsPlayable(true)
             .build()
 
         return MediaItem.Builder()

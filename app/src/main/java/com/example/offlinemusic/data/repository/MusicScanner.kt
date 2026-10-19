@@ -3,9 +3,11 @@ package com.example.offlinemusic.data.repository
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import com.example.offlinemusic.data.database.MusicDatabase
 import com.example.offlinemusic.data.model.Album
+import com.example.offlinemusic.data.model.ArtistProfile
 import com.example.offlinemusic.data.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -17,28 +19,32 @@ import java.util.ArrayDeque
 
 class MusicScanner(private val context: Context) {
 
-    private val database = MusicDatabase(context)
+    val database = MusicDatabase(context)
     private val supportedExtensions = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "opus", "wma")
+
+    private fun getArtworkUri(file: File): Uri {
+        return try {
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+        } catch (e: Exception) {
+            Uri.fromFile(file)
+        }
+    }
 
     data class ScanResult(
         val songs: List<Song>,
         val albums: List<Album>
     )
 
-    /**
-     * Instantly loads previously scanned songs from the SQLite database.
-     * Takes only a few milliseconds with 0 filesystem I/O overhead.
-     */
     suspend fun getCachedScanResult(): ScanResult = withContext(Dispatchers.IO) {
         val songs = database.getAllSongs()
-        ScanResult(songs = songs, albums = groupSongsIntoAlbums(songs))
+        val albums = database.getAllAlbums()
+        ScanResult(songs = songs, albums = albums)
     }
 
-    /**
-     * Performs an incremental scan of the chosen directory tree.
-     * Unchanged files are reused from cache without running MediaMetadataRetriever.
-     * Only new or modified files undergo metadata extraction.
-     */
     suspend fun scanTree(treeUri: Uri, forceFullRescan: Boolean = false): ScanResult = withContext(Dispatchers.IO) {
         val rootDoc = DocumentFile.fromTreeUri(context, treeUri)
             ?: return@withContext getCachedScanResult()
@@ -79,11 +85,9 @@ class MusicScanner(private val context: Context) {
                         val fileLastModified = file.lastModified()
                         val fileLength = file.length()
 
-                        // Check if file is already in database and unmodified
                         if (!forceFullRescan && cached != null && cached.dateModified == fileLastModified && cached.sizeBytes == fileLength) {
                             currentSongs.add(cached.song)
                         } else {
-                            // Needs metadata extraction (new or modified)
                             filesToExtract.add(Pair(file, currentAlbumName))
                         }
                     }
@@ -91,13 +95,13 @@ class MusicScanner(private val context: Context) {
             }
         }
 
-        // Deleted files: uris in cache that no longer exist on disk
+        // Deleted files
         val deletedUris = cachedMap.keys.filter { it !in seenUris }
         if (deletedUris.isNotEmpty()) {
             database.deleteSongsByUris(deletedUris)
         }
 
-        // Extract metadata for new/modified files in parallel (chunks of 4)
+        // Parallel metadata extraction for new/modified files
         if (filesToExtract.isNotEmpty()) {
             val newlyExtractedSongs = mutableListOf<Song>()
             filesToExtract.chunked(4).forEach { chunk ->
@@ -110,29 +114,69 @@ class MusicScanner(private val context: Context) {
                 newlyExtractedSongs.addAll(chunkResults)
             }
 
-            // Persist newly extracted songs in SQLite database
-            database.insertOrReplaceSongs(newlyExtractedSongs)
+            database.insertOrUpdateScannedData(newlyExtractedSongs)
             currentSongs.addAll(newlyExtractedSongs)
         }
 
-        val albums = groupSongsIntoAlbums(currentSongs)
-        ScanResult(songs = currentSongs, albums = albums)
+        val allDbSongs = database.getAllSongs()
+        val allDbAlbums = database.getAllAlbums()
+
+        ScanResult(songs = allDbSongs, albums = allDbAlbums)
     }
 
-    private fun groupSongsIntoAlbums(songs: List<Song>): List<Album> {
-        val albumsMap = songs.groupBy { it.albumFolder }
-        return albumsMap.map { (folderName, folderSongs) ->
-            val totalDuration = folderSongs.sumOf { it.durationMs }
-            val firstArtwork = folderSongs.firstOrNull { it.artworkUri != null }?.artworkUri
-            Album(
-                name = folderName,
-                folderPath = folderName,
-                songCount = folderSongs.size,
-                totalDurationMs = totalDuration,
-                artworkUri = firstArtwork,
-                songs = folderSongs.sortedBy { it.trackNumber ?: Int.MAX_VALUE }
-            )
-        }.sortedBy { it.name.lowercase() }
+    suspend fun getAlbumWithSongs(albumId: String): Album? = withContext(Dispatchers.IO) {
+        database.getAlbumWithSongs(albumId)
+    }
+
+    suspend fun getArtistProfile(artistName: String): ArtistProfile = withContext(Dispatchers.IO) {
+        val songs = database.getSongsForArtist(artistName)
+        val albums = database.getAlbumsForArtist(artistName)
+        val firstArt = songs.firstOrNull { it.artworkUri != null }?.artworkUri
+            ?: albums.firstOrNull { it.artworkUri != null }?.artworkUri
+
+        ArtistProfile(
+            name = artistName,
+            songs = songs,
+            albums = albums,
+            totalDurationMs = songs.sumOf { it.durationMs },
+            artworkUri = firstArt
+        )
+    }
+
+    suspend fun createCustomAlbum(name: String): String = withContext(Dispatchers.IO) {
+        database.createCustomAlbum(name)
+    }
+
+    suspend fun deleteAlbum(albumId: String) = withContext(Dispatchers.IO) {
+        database.deleteAlbum(albumId)
+    }
+
+    suspend fun addSongsToAlbum(albumId: String, songIds: List<String>) = withContext(Dispatchers.IO) {
+        database.addSongsToAlbum(albumId, songIds)
+    }
+
+    suspend fun addSongToAlbum(albumId: String, songId: String) = withContext(Dispatchers.IO) {
+        database.addSongToAlbum(albumId, songId)
+    }
+
+    suspend fun removeSongFromAlbum(albumId: String, songId: String) = withContext(Dispatchers.IO) {
+        database.removeSongFromAlbum(albumId, songId)
+    }
+
+    suspend fun moveSongBetweenAlbums(songId: String, fromAlbumId: String, toAlbumId: String) = withContext(Dispatchers.IO) {
+        database.moveSongBetweenAlbums(songId, fromAlbumId, toAlbumId)
+    }
+
+    suspend fun getLikedSongIds(): Set<String> = withContext(Dispatchers.IO) {
+        database.getLikedSongIds()
+    }
+
+    suspend fun toggleLikeSong(songId: String): Boolean = withContext(Dispatchers.IO) {
+        database.toggleLikeSong(songId)
+    }
+
+    suspend fun isSongLiked(songId: String): Boolean = withContext(Dispatchers.IO) {
+        database.isSongLiked(songId)
     }
 
     private fun extractSongMetadata(
@@ -185,22 +229,37 @@ class MusicScanner(private val context: Context) {
                 trackNumber = it.split('/').firstOrNull()?.trim()?.toIntOrNull()
             }
 
-            // Embedded Album Art caching
+            // Embedded Album Art caching with fast downsampled thumbnail creation
             val albumSafeKey = albumFolderName.replace("[^a-zA-Z0-9_-]".toRegex(), "_")
             val cachedAlbumArt = File(artworkCacheDir, "art_album_${albumSafeKey}.jpg")
             if (cachedAlbumArt.exists() && cachedAlbumArt.length() > 0) {
-                artworkUri = Uri.fromFile(cachedAlbumArt)
+                artworkUri = getArtworkUri(cachedAlbumArt)
             } else {
                 val picBytes = mmr.embeddedPicture
                 if (picBytes != null && picBytes.isNotEmpty()) {
                     try {
-                        FileOutputStream(cachedAlbumArt).use { it.write(picBytes) }
-                        artworkUri = Uri.fromFile(cachedAlbumArt)
+                        val boundsOptions = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        android.graphics.BitmapFactory.decodeByteArray(picBytes, 0, picBytes.size, boundsOptions)
+                        var sampleSize = 1
+                        while (boundsOptions.outWidth / (sampleSize * 2) >= 360 && boundsOptions.outHeight / (sampleSize * 2) >= 360) {
+                            sampleSize *= 2
+                        }
+                        val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                            inSampleSize = sampleSize
+                            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                        }
+                        val bitmap = android.graphics.BitmapFactory.decodeByteArray(picBytes, 0, picBytes.size, decodeOptions)
+                        if (bitmap != null) {
+                            FileOutputStream(cachedAlbumArt).use { out ->
+                                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                            }
+                            bitmap.recycle()
+                            artworkUri = getArtworkUri(cachedAlbumArt)
+                        }
                     } catch (e: Exception) {
-                        val songArt = File(artworkCacheDir, "art_song_${songId}.jpg")
                         try {
-                            FileOutputStream(songArt).use { it.write(picBytes) }
-                            artworkUri = Uri.fromFile(songArt)
+                            FileOutputStream(cachedAlbumArt).use { it.write(picBytes) }
+                            artworkUri = getArtworkUri(cachedAlbumArt)
                         } catch (_: Exception) {}
                     }
                 }
