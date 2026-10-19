@@ -94,6 +94,9 @@ interface PlaylistDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPlaylistTracks(playlistTracks: List<PlaylistTrackEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertPlaylistTrack(playlistTrack: PlaylistTrackEntity)
+
     @Query("""
         SELECT t.* FROM tracks t
         INNER JOIN playlist_tracks pt ON t.id = pt.track_id
@@ -121,6 +124,13 @@ interface PlaylistDao {
 
     @Query("DELETE FROM playlist_tracks WHERE playlist_id = :playlistId")
     suspend fun clearPlaylistTracks(playlistId: String)
+
+    @Query("""
+        SELECT pt.track_id FROM playlist_tracks pt
+        WHERE pt.playlist_id = :playlistId
+        ORDER BY pt.added_timestamp ASC
+    """)
+    suspend fun getOldestTrackIdsForPlaylist(playlistId: String): List<String>
 
     @Query("UPDATE playlist_tracks SET position = :newPosition WHERE playlist_id = :playlistId AND track_id = :trackId")
     suspend fun updateTrackPosition(playlistId: String, trackId: String, newPosition: Int)

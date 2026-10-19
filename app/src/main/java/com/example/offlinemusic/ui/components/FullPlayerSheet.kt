@@ -24,11 +24,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
@@ -59,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -91,12 +95,15 @@ fun FullPlayerSheet(
     onPlayQueueIndex: (Int) -> Unit,
     onDismiss: () -> Unit,
     onEditMetadataClick: () -> Unit = {},
+    lyrics: com.example.offlinemusic.downloader.models.SyncedLyrics? = null,
+    currentLyricsIndex: Int = -1,
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var isQueueVisible by remember { mutableStateOf(false) }
+    var isLyricsVisible by remember { mutableStateOf(false) }
 
     var isUserSeeking by remember { mutableStateOf(false) }
     var seekProgress by remember { mutableFloatStateOf(0f) }
@@ -139,7 +146,11 @@ fun FullPlayerSheet(
                 }
 
                 Text(
-                    text = if (isQueueVisible) "PLAYING QUEUE" else "NOW PLAYING",
+                    text = when {
+                        isQueueVisible -> "PLAYING QUEUE"
+                        isLyricsVisible -> "LYRICS"
+                        else -> "NOW PLAYING"
+                    },
                     style = MaterialTheme.typography.labelMedium.copy(
                         letterSpacing = 2.sp,
                         fontWeight = FontWeight.Bold
@@ -156,7 +167,11 @@ fun FullPlayerSheet(
                             modifier = Modifier.size(22.dp)
                         )
                     }
-                    IconButton(onClick = { isQueueVisible = !isQueueVisible }) {
+
+                    IconButton(onClick = {
+                        isQueueVisible = !isQueueVisible
+                        if (isQueueVisible) isLyricsVisible = false
+                    }) {
                         Icon(
                             imageVector = Icons.Default.QueueMusic,
                             contentDescription = "Queue",
@@ -174,6 +189,18 @@ fun FullPlayerSheet(
                     currentSongId = song.id,
                     isPlaying = isPlaying,
                     onSongClick = onPlayQueueIndex,
+                    modifier = Modifier.weight(1f)
+                )
+            } else if (isLyricsVisible) {
+                // Spotify-Style Full Page Lyrics View
+                FullPageLyricsView(
+                    song = song,
+                    lyrics = lyrics,
+                    currentActiveIndex = currentLyricsIndex,
+                    isPlaying = isPlaying,
+                    onPlayPauseClick = onPlayPauseClick,
+                    onSeekTo = onSeekTo,
+                    onClose = { isLyricsVisible = false },
                     modifier = Modifier.weight(1f)
                 )
             } else {
@@ -436,7 +463,22 @@ fun FullPlayerSheet(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(28.dp))
+
+                    // Spotify-style scrolling down Lyrics Preview Box
+                    SpotifyLyricsPreviewCard(
+                        lyrics = lyrics,
+                        currentActiveIndex = currentLyricsIndex,
+                        onClick = {
+                            isLyricsVisible = true
+                            isQueueVisible = false
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(30.dp))
                 }
             }
         }
@@ -534,3 +576,255 @@ private fun formatDuration(durationMs: Long): String {
     val seconds = totalSeconds % 60
     return String.format("%d:%02d", minutes, seconds)
 }
+
+@Composable
+private fun SpotifyLyricsPreviewCard(
+    lyrics: com.example.offlinemusic.downloader.models.SyncedLyrics?,
+    currentActiveIndex: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val cardGradient = Brush.verticalGradient(
+        colors = listOf(
+            Color(0xFF261D3A), // Sleek deep purple-slate
+            Color(0xFF130E20)
+        )
+    )
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(cardGradient)
+            .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(22.dp))
+            .clickable { onClick() }
+            .padding(20.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Card Header: "Lyrics" title + Expand Icon
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Lyrics",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.5.sp
+                        ),
+                        color = Color.White
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(alpha = 0.12f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.OpenInFull,
+                        contentDescription = "Expand Lyrics",
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "MORE",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            letterSpacing = 1.sp
+                        ),
+                        color = Color.White
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Lyrics Preview Content
+            if (lyrics != null && lyrics.isSynced && lyrics.lines.isNotEmpty()) {
+                val activeIdx = currentActiveIndex.coerceIn(0, lyrics.lines.lastIndex)
+                val activeLine = lyrics.lines[activeIdx]
+                val nextLine = if (activeIdx + 1 in lyrics.lines.indices) lyrics.lines[activeIdx + 1] else null
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = activeLine.text,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            lineHeight = 26.sp
+                        ),
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (nextLine != null) {
+                        Text(
+                            text = nextLine.text,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                lineHeight = 21.sp
+                            ),
+                            color = Color.White.copy(alpha = 0.5f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            } else if (lyrics != null && !lyrics.plainLyrics.isNullOrBlank()) {
+                val previewLines = lyrics.plainLyrics.lines().filter { it.isNotBlank() }.take(2)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    previewLines.forEachIndexed { i, l ->
+                        Text(
+                            text = l,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = if (i == 0) 17.sp else 14.sp,
+                                fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Medium
+                            ),
+                            color = if (i == 0) Color.White else Color.White.copy(alpha = 0.5f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    text = "Lyrics will appear here as the song plays • Tap to search or view full lyrics",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    color = Color.White.copy(alpha = 0.6f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FullPageLyricsView(
+    song: Song,
+    lyrics: com.example.offlinemusic.downloader.models.SyncedLyrics?,
+    currentActiveIndex: Int,
+    isPlaying: Boolean,
+    onPlayPauseClick: () -> Unit,
+    onSeekTo: (Long) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        // Full Page Lyrics Top Navigation
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            IconButton(onClick = onClose) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Back to Player",
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = song.artist,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            IconButton(onClick = onClose) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Close Lyrics",
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+
+        // Lyrics Body with Interactive Tap-To-Seek
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            if (lyrics != null && (lyrics.isSynced || !lyrics.plainLyrics.isNullOrBlank())) {
+                SyncedLyricsView(
+                    lyrics = lyrics,
+                    currentActiveIndex = currentActiveIndex,
+                    onLineClick = onSeekTo,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "Searching or loading lyrics...",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Floating Mini Play/Pause Pill at bottom
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 20.dp)
+                    .clip(RoundedCornerShape(30.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f))
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(30.dp))
+                    .clickable { onPlayPauseClick() }
+                    .padding(horizontal = 22.dp, vertical = 10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isPlaying) "PLAYING" else "PAUSED",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+    }
+}
+

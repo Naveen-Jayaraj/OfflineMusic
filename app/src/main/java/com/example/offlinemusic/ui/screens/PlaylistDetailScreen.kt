@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
@@ -122,8 +123,10 @@ fun PlaylistDetailScreen(
     }
 
     val isLikedSpecial = playlist.isLikedSpecial
+    val isRecentlyDownloadedSpecial = playlist.isRecentlyDownloadedSpecial
     val isFolder = playlist.playlistType == "FOLDER"
     val isUserPlaylist = playlist.playlistType == "USER"
+    val isSpecialSystemPlaylist = isLikedSpecial || isRecentlyDownloadedSpecial
 
     Column(
         modifier = modifier
@@ -151,12 +154,14 @@ fun PlaylistDetailScreen(
                 Icon(
                     imageVector = when {
                         isLikedSpecial -> Icons.Default.Favorite
+                        isRecentlyDownloadedSpecial -> Icons.Default.DownloadDone
                         isFolder -> Icons.Default.Folder
                         else -> Icons.Default.QueueMusic
                     },
                     contentDescription = null,
                     tint = when {
                         isLikedSpecial -> Color(0xFFE91E63)
+                        isRecentlyDownloadedSpecial -> Color(0xFF00E676)
                         isFolder -> MaterialTheme.colorScheme.primary
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
@@ -166,6 +171,7 @@ fun PlaylistDetailScreen(
                 Text(
                     text = when {
                         isLikedSpecial -> "LIKED SONGS"
+                        isRecentlyDownloadedSpecial -> "RECENTLY DOWNLOADED"
                         isFolder -> "FOLDER PLAYLIST"
                         else -> "PLAYLIST"
                     },
@@ -175,7 +181,7 @@ fun PlaylistDetailScreen(
             }
 
             Box {
-                if (!isLikedSpecial) {
+                if (!isSpecialSystemPlaylist) {
                     IconButton(onClick = { showMenu = true }) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
@@ -255,7 +261,7 @@ fun PlaylistDetailScreen(
                             .size(190.dp)
                             .clip(RoundedCornerShape(20.dp))
                             .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
-                            .clickable(enabled = !isLikedSpecial) {
+                            .clickable(enabled = !isSpecialSystemPlaylist) {
                                 imagePickerLauncher.launch("image/*")
                             }
                     ) {
@@ -277,6 +283,28 @@ fun PlaylistDetailScreen(
                                 Icon(
                                     imageVector = Icons.Default.Favorite,
                                     contentDescription = "Liked Songs",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(68.dp)
+                                )
+                            }
+                        } else if (isRecentlyDownloadedSpecial) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        Brush.linearGradient(
+                                            colors = listOf(
+                                                Color(0xFF00E676),
+                                                Color(0xFF00B0FF),
+                                                Color(0xFF304FFE)
+                                            )
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DownloadDone,
+                                    contentDescription = "Recently Downloaded",
                                     tint = Color.White,
                                     modifier = Modifier.size(68.dp)
                                 )
@@ -567,8 +595,11 @@ fun PlaylistDetailScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (isLikedSpecial) "No liked songs yet. Tap the heart on any song to add it."
-                            else "No songs in this playlist. Tap 'Add Songs' to get started.",
+                            text = when {
+                                isLikedSpecial -> "No liked songs yet. Tap the heart on any song to add it."
+                                isRecentlyDownloadedSpecial -> "No downloaded songs yet. Search and download songs to listen offline."
+                                else -> "No songs in this playlist. Tap 'Add Songs' to get started."
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

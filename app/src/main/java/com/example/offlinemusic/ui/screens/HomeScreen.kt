@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Person
@@ -362,6 +363,7 @@ private fun HomeQuickPlaylistItem(
     modifier: Modifier = Modifier
 ) {
     val isLiked = playlist.isLikedSpecial
+    val isRecentlyDownloaded = playlist.isRecentlyDownloadedSpecial
 
     Row(
         modifier = modifier
@@ -391,6 +393,24 @@ private fun HomeQuickPlaylistItem(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Favorite,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            } else if (isRecentlyDownloaded) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(Color(0xFF00E676), Color(0xFF00B0FF), Color(0xFF304FFE))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DownloadDone,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(24.dp)

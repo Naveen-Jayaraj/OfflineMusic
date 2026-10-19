@@ -18,6 +18,7 @@ import java.util.regex.Pattern
 object YouTubeDownloader {
 
     private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    private var cachedVisitorData: String? = null
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -28,7 +29,10 @@ object YouTubeDownloader {
     private val VIDEO_ID_PATTERN = Pattern.compile("(?:v=|/v/|youtu\\.be/|/embed/|/shorts/)([a-zA-Z0-9_-]{11})")
 
     fun extractVideoId(urlOrId: String): String {
-        val trimmed = urlOrId.trim()
+        var trimmed = urlOrId.trim()
+        if (trimmed.startsWith("yt_")) {
+            trimmed = trimmed.substring(3)
+        }
         if (trimmed.length == 11 && trimmed.matches(Regex("[a-zA-Z0-9_-]{11}"))) {
             return trimmed
         }
@@ -68,6 +72,11 @@ object YouTubeDownloader {
             }
 
             val root = JSONObject(body)
+            // Cache live visitorData token from search response for subsequent stream queries
+            root.optJSONObject("responseContext")?.optString("visitorData")?.takeIf { it.isNotBlank() }?.let {
+                cachedVisitorData = it
+            }
+
             val results = mutableListOf<DownloadableTrack>()
 
             val contents = root.optJSONObject("contents")
@@ -139,122 +148,192 @@ object YouTubeDownloader {
         }
     }
 
+    private data class InnerTubeClientConfig(
+        val clientContext: JSONObject,
+        val clientNameHeader: String,
+        val clientVersionHeader: String,
+        val userAgentHeader: String
+    )
+
     /**
-     * Fetch direct streaming audio URL for a YouTube video
+     * Fetch direct streaming audio URL for a YouTube video using proven InnerTube clients
      */
     suspend fun getAudioStreamUrl(videoId: String): Result<String> = withContext(Dispatchers.IO) {
         try {
             val cleanId = extractVideoId(videoId)
 
-            // 1. Try YouTube Android / iOS InnerTube Player
-            val playerUrl = "https://www.youtube.com/youtubei/v1/player"
+            // Step 1: Pre-fetch watch page to obtain live VISITOR_DATA token and signature timestamp (sts)
+            var visitorData: String? = cachedVisitorData
+            var sts = 20740L
+
+            try {
+                val watchUrl = "https://www.youtube.com/watch?v=$cleanId"
+                val watchReq = Request.Builder()
+                    .url(watchUrl)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .build()
+
+                val watchHtml = httpClient.newCall(watchReq).execute().use { it.body?.string() ?: "" }
+                val visMatcher = Pattern.compile("\"VISITOR_DATA\":\\s*\"([^\"]+)\"").matcher(watchHtml)
+                if (visMatcher.find()) {
+                    visitorData = visMatcher.group(1)
+                    cachedVisitorData = visitorData
+                }
+                val stsMatcher = Pattern.compile("\"sts\":\\s*(\\d+)").matcher(watchHtml)
+                if (stsMatcher.find()) {
+                    sts = stsMatcher.group(1)?.toLongOrNull() ?: 20740L
+                }
+            } catch (_: Exception) {}
+
+            // Step 2: Fallback visitorData via lightweight search ping if still null
+            if (visitorData.isNullOrBlank()) {
+                try {
+                    val pingPayload = JSONObject().apply {
+                        put("context", JSONObject().apply {
+                            put("client", JSONObject().apply {
+                                put("clientName", "WEB")
+                                put("clientVersion", "2.20240101.00.00")
+                            })
+                        })
+                        put("query", cleanId)
+                    }
+                    val pingReq = Request.Builder()
+                        .url("https://www.youtube.com/youtubei/v1/search")
+                        .header("User-Agent", USER_AGENT)
+                        .header("Content-Type", "application/json")
+                        .post(pingPayload.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+
+                    val pingBody = httpClient.newCall(pingReq).execute().use { it.body?.string() ?: "" }
+                    val pingJson = JSONObject(pingBody)
+                    pingJson.optJSONObject("responseContext")?.optString("visitorData")?.takeIf { it.isNotBlank() }?.let {
+                        visitorData = it
+                        cachedVisitorData = it
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // Step 3: Query InnerTube Player API using VISIONOS client (no JS signature decipher required)
+            val playerUrl = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
 
             val clients = listOf(
-                JSONObject().apply {
-                    put("clientName", "ANDROID")
-                    put("clientVersion", "19.09.37")
-                    put("androidSdkVersion", 34)
-                },
-                JSONObject().apply {
-                    put("clientName", "IOS")
-                    put("clientVersion", "19.29.1")
-                    put("deviceModel", "iPhone16,2")
-                }
+                // Client 1: VISIONOS (Apple Reality Device - direct AAC / Opus streams)
+                InnerTubeClientConfig(
+                    clientContext = JSONObject().apply {
+                        put("clientName", "VISIONOS")
+                        put("clientVersion", "1.02")
+                        put("deviceMake", "Apple")
+                        put("deviceModel", "RealityDevice17,1")
+                        put("userAgent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15")
+                        put("osName", "visionOS")
+                        put("osVersion", "26.5.23O471")
+                        put("hl", "en")
+                        put("timeZone", "UTC")
+                        put("utcOffsetMinutes", 0)
+                    },
+                    clientNameHeader = "101",
+                    clientVersionHeader = "1.02",
+                    userAgentHeader = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
+                ),
+                // Client 2: ANDROID_VR (Oculus Quest 3 fallback)
+                InnerTubeClientConfig(
+                    clientContext = JSONObject().apply {
+                        put("clientName", "ANDROID_VR")
+                        put("clientVersion", "1.65.10")
+                        put("deviceMake", "Oculus")
+                        put("deviceModel", "Quest 3")
+                        put("androidSdkVersion", 32)
+                        put("userAgent", "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip")
+                        put("osName", "Android")
+                        put("osVersion", "12L")
+                        put("hl", "en")
+                        put("timeZone", "UTC")
+                        put("utcOffsetMinutes", 0)
+                    },
+                    clientNameHeader = "28",
+                    clientVersionHeader = "1.65.10",
+                    userAgentHeader = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+                )
             )
 
-            for (clientObj in clients) {
+            for (cfg in clients) {
                 val payload = JSONObject().apply {
                     put("context", JSONObject().apply {
-                        put("client", clientObj)
+                        put("client", cfg.clientContext)
                     })
                     put("videoId", cleanId)
+                    put("playbackContext", JSONObject().apply {
+                        put("contentPlaybackContext", JSONObject().apply {
+                            put("html5Preference", "HTML5_PREF_WANTS")
+                            put("signatureTimestamp", sts)
+                        })
+                    })
+                    put("contentCheckOk", true)
+                    put("racyCheckOk", true)
                 }
 
-                val req = Request.Builder()
+                val reqBuilder = Request.Builder()
                     .url(playerUrl)
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", cfg.userAgentHeader)
                     .header("Content-Type", "application/json")
-                    .post(payload.toString().toRequestBody("application/json".toMediaType()))
-                    .build()
+                    .header("X-YouTube-Client-Name", cfg.clientNameHeader)
+                    .header("X-YouTube-Client-Version", cfg.clientVersionHeader)
+                    .header("Origin", "https://www.youtube.com")
+
+                val currentVisitor = visitorData
+                if (!currentVisitor.isNullOrBlank()) {
+                    reqBuilder.header("X-Goog-Visitor-Id", currentVisitor)
+                }
+
+                val req = reqBuilder.post(payload.toString().toRequestBody("application/json".toMediaType())).build()
 
                 try {
                     val respStr = httpClient.newCall(req).execute().use { it.body?.string() ?: "" }
                     if (respStr.isNotBlank()) {
                         val playerJson = JSONObject(respStr)
-                        val streamingData = playerJson.optJSONObject("streamingData")
-                        val adaptiveFormats = streamingData?.optJSONArray("adaptiveFormats")
+                        val status = playerJson.optJSONObject("playabilityStatus")?.optString("status", "")
+                        android.util.Log.d("YouTubeDownloader", "Player response status for $cleanId (${cfg.clientNameHeader}): $status")
+                        if (status == "OK" || status.isNullOrBlank()) {
+                            val streamingData = playerJson.optJSONObject("streamingData")
+                            val adaptiveFormats = streamingData?.optJSONArray("adaptiveFormats")
 
-                        if (adaptiveFormats != null) {
-                            var bestAudioUrl: String? = null
-                            var highestBitrate = 0
+                            if (adaptiveFormats != null && adaptiveFormats.length() > 0) {
+                                var bestAudioUrl: String? = null
+                                var highestBitrate = 0
 
-                            for (f in 0 until adaptiveFormats.length()) {
-                                val fmt = adaptiveFormats.getJSONObject(f)
-                                val mimeType = fmt.optString("mimeType", "")
-                                if (mimeType.startsWith("audio/")) {
-                                    val directUrl = fmt.optString("url", "")
-                                    val bitrate = fmt.optInt("bitrate", 0)
-
-                                    if (directUrl.isNotBlank() && bitrate >= highestBitrate) {
-                                        highestBitrate = bitrate
-                                        bestAudioUrl = directUrl
+                                // First pass: Look for high quality AAC (audio/mp4)
+                                for (f in 0 until adaptiveFormats.length()) {
+                                    val fmt = adaptiveFormats.getJSONObject(f)
+                                    val mimeType = fmt.optString("mimeType", "")
+                                    if (mimeType.startsWith("audio/mp4")) {
+                                        val directUrl = fmt.optString("url", "")
+                                        val bitrate = fmt.optInt("bitrate", 0)
+                                        if (directUrl.isNotBlank() && bitrate >= highestBitrate) {
+                                            highestBitrate = bitrate
+                                            bestAudioUrl = directUrl
+                                        }
                                     }
                                 }
-                            }
 
-                            if (!bestAudioUrl.isNullOrBlank()) {
-                                return@withContext Result.success(bestAudioUrl)
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-
-            // 2. Fallback to Cobalt API audio extraction
-            try {
-                val cobaltReq = Request.Builder()
-                    .url("https://api.cobalt.tools/api/json")
-                    .header("Accept", "application/json")
-                    .header("Content-Type", "application/json")
-                    .post(
-                        JSONObject().apply {
-                            put("url", "https://www.youtube.com/watch?v=$cleanId")
-                            put("isAudioOnly", true)
-                            put("aFormat", "mp3")
-                        }.toString().toRequestBody("application/json".toMediaType())
-                    )
-                    .build()
-
-                val cobaltRes = httpClient.newCall(cobaltReq).execute().use { it.body?.string() ?: "" }
-                if (cobaltRes.isNotBlank()) {
-                    val cobaltJson = JSONObject(cobaltRes)
-                    val streamUrl = cobaltJson.optString("url", "")
-                    if (streamUrl.isNotBlank()) {
-                        return@withContext Result.success(streamUrl)
-                    }
-                }
-            } catch (_: Exception) {}
-
-            // 3. Fallback to Invidious audio stream endpoint
-            val invidiousInstances = listOf("https://inv.tux.pizza", "https://invidious.nerdvpn.de", "https://vid.puffyan.us")
-            for (instance in invidiousInstances) {
-                try {
-                    val invReq = Request.Builder()
-                        .url("$instance/api/v1/videos/$cleanId")
-                        .build()
-                    val invRes = httpClient.newCall(invReq).execute().use { it.body?.string() ?: "" }
-                    if (invRes.isNotBlank()) {
-                        val invJson = JSONObject(invRes)
-                        val formats = invJson.optJSONArray("adaptiveFormats")
-                        if (formats != null) {
-                            for (f in 0 until formats.length()) {
-                                val fmt = formats.getJSONObject(f)
-                                val type = fmt.optString("type", "")
-                                if (type.startsWith("audio/")) {
-                                    val streamUrl = fmt.optString("url", "")
-                                    if (streamUrl.isNotBlank()) {
-                                        return@withContext Result.success(streamUrl)
+                                // Second pass: Look for any audio stream (Opus / WebM)
+                                if (bestAudioUrl.isNullOrBlank()) {
+                                    for (f in 0 until adaptiveFormats.length()) {
+                                        val fmt = adaptiveFormats.getJSONObject(f)
+                                        val mimeType = fmt.optString("mimeType", "")
+                                        if (mimeType.startsWith("audio/")) {
+                                            val directUrl = fmt.optString("url", "")
+                                            val bitrate = fmt.optInt("bitrate", 0)
+                                            if (directUrl.isNotBlank() && bitrate >= highestBitrate) {
+                                                highestBitrate = bitrate
+                                                bestAudioUrl = directUrl
+                                            }
+                                        }
                                     }
+                                }
+
+                                if (!bestAudioUrl.isNullOrBlank()) {
+                                    return@withContext Result.success(bestAudioUrl)
                                 }
                             }
                         }
@@ -262,7 +341,7 @@ object YouTubeDownloader {
                 } catch (_: Exception) {}
             }
 
-            Result.failure(Exception("Could not extract audio stream for YouTube video $cleanId"))
+            Result.failure(Exception("Could not extract direct audio stream for YouTube video $cleanId"))
         } catch (e: Exception) {
             Result.failure(e)
         }

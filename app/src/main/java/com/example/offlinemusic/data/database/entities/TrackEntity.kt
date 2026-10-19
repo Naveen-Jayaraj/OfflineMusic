@@ -61,5 +61,7 @@ data class TrackEntity(
     @ColumnInfo(name = "last_played_timestamp")
     val lastPlayedTimestamp: Long? = null,
     @ColumnInfo(name = "relative_path")
-    val relativePath: String = ""
+    val relativePath: String = "",
+    @ColumnInfo(name = "lyrics_uri")
+    val lyricsUri: String? = null
 )

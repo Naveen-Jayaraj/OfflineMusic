@@ -27,4 +27,7 @@ data class Playlist(
 
     val isLikedSpecial: Boolean
         get() = playlistType == "LIKED" || id == "liked_songs"
+
+    val isRecentlyDownloadedSpecial: Boolean
+        get() = playlistType == "DOWNLOADS" || id == "recently_downloaded"
 }

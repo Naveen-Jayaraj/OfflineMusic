@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
@@ -31,7 +32,8 @@ fun ArtworkView(
     modifier: Modifier = Modifier,
     size: Dp = 48.dp,
     shape: Shape = RoundedCornerShape(8.dp),
-    isLikedSongsSpecial: Boolean = false
+    isLikedSongsSpecial: Boolean = false,
+    isRecentlyDownloadedSpecial: Boolean = false
 ) {
     if (isLikedSongsSpecial) {
         Box(
@@ -41,8 +43,9 @@ fun ArtworkView(
                 .background(
                     Brush.linearGradient(
                         colors = listOf(
-                            Color(0xFF4527A0),
-                            Color(0xFF7B1FA2)
+                            Color(0xFFE91E63),
+                            Color(0xFF9C27B0),
+                            Color(0xFF3F51B5)
                         )
                     )
                 )
@@ -52,6 +55,30 @@ fun ArtworkView(
             Icon(
                 imageVector = Icons.Filled.Favorite,
                 contentDescription = "Liked Songs",
+                tint = Color.White,
+                modifier = Modifier.size(size * 0.45f)
+            )
+        }
+    } else if (isRecentlyDownloadedSpecial) {
+        Box(
+            modifier = modifier
+                .size(size)
+                .clip(shape)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color(0xFF00E676),
+                            Color(0xFF00B0FF),
+                            Color(0xFF304FFE)
+                        )
+                    )
+                )
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), shape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Filled.DownloadDone,
+                contentDescription = "Recently Downloaded",
                 tint = Color.White,
                 modifier = Modifier.size(size * 0.45f)
             )

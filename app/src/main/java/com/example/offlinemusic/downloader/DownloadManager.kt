@@ -1,8 +1,7 @@
 package com.example.offlinemusic.downloader
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.media.MediaScannerConnection
 import android.os.Environment
 import com.example.offlinemusic.data.database.AppDatabase
 import com.example.offlinemusic.data.database.entities.PlaylistEntity
@@ -12,6 +11,7 @@ import com.example.offlinemusic.data.repository.MusicScanner
 import com.example.offlinemusic.downloader.engine.FuzzyMatcher
 import com.example.offlinemusic.downloader.engine.LrclibClient
 import com.example.offlinemusic.downloader.engine.LucidaDownloader
+import com.example.offlinemusic.downloader.engine.MetadataEnricher
 import com.example.offlinemusic.downloader.engine.SpotifyPlaylistClient
 import com.example.offlinemusic.downloader.engine.YouTubeDownloader
 import com.example.offlinemusic.downloader.models.DownloadProgress
@@ -35,7 +35,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -199,7 +198,6 @@ class DownloadManager private constructor(private val context: Context) {
                     DownloadService.updateProgress(context, "(${index + 1}/$totalTracks) ${spotifyTrack.title}", notifProgress)
 
                     try {
-                        // Find match on YouTube or Lucida
                         val candidateTrack = resolveSpotifyTrackToCandidate(spotifyTrack)
                         if (candidateTrack != null) {
                             val downloadedSong = executeTrackDownload(
@@ -209,7 +207,6 @@ class DownloadManager private constructor(private val context: Context) {
                             )
 
                             if (downloadedSong != null) {
-                                // Add to imported playlist preserving position
                                 playlistDao.insertPlaylistTrack(
                                     PlaylistTrackEntity(
                                         playlistId = playlistEntityId,
@@ -221,7 +218,7 @@ class DownloadManager private constructor(private val context: Context) {
                                 completedCount++
                             }
                         }
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         // Continue to next track in playlist on single track failure
                     }
                 }
@@ -286,38 +283,90 @@ class DownloadManager private constructor(private val context: Context) {
             current + (downloadId to existing.copy(status = DownloadStatus.DOWNLOADING, progress = 0.05f))
         }
 
-        // 1. Resolve Audio Stream URL
-        val (streamUrl, formatExt) = resolveStream(track)
-            ?: throw IllegalStateException("Could not obtain audio stream for ${track.title}")
-
+        var formatExt = if (track.source == DownloadSource.LUCIDA) "flac" else "m4a"
         val safeFilename = sanitizeFilename("${track.artist} - ${track.title}")
-        val targetAudioFile = File(targetDir, "${safeFilename}.${formatExt}")
+        var targetAudioFile = File(targetDir, "${safeFilename}.${formatExt}")
         val tempAudioFile = File(targetDir, "${safeFilename}.${formatExt}.tmp")
 
-        // 2. Stream Audio Bytes with Progress
-        downloadFileWithProgress(streamUrl, tempAudioFile, downloadId)
+        val streamIdentifier = if (track.source == DownloadSource.LUCIDA) {
+            track.sourceUrl.ifBlank { track.id }
+        } else {
+            if (track.sourceUrl.isNotBlank()) track.sourceUrl else track.id
+        }
+
+        var downloadResult = if (track.source == DownloadSource.LUCIDA) {
+            LucidaDownloader.downloadTrack(streamIdentifier, tempAudioFile) { prog, dl, tot ->
+                updateDownloadProgress(downloadId, prog, dl, tot)
+            }
+        } else {
+            YouTubeDownloader.downloadTrack(streamIdentifier, tempAudioFile) { prog, dl, tot ->
+                updateDownloadProgress(downloadId, prog, dl, tot)
+            }
+        }
+
+        // Seamless fallback to YouTube if Lucida stream fails
+        if (downloadResult.isFailure && track.source == DownloadSource.LUCIDA) {
+            val ytFallback = YouTubeDownloader.search("${track.artist} - ${track.title}", limit = 1).firstOrNull()
+            if (ytFallback != null) {
+                formatExt = "m4a"
+                targetAudioFile = File(targetDir, "${safeFilename}.${formatExt}")
+                val ytTemp = File(targetDir, "${safeFilename}.${formatExt}.tmp")
+                val ytUrl = ytFallback.sourceUrl.ifBlank { ytFallback.id }
+                downloadResult = YouTubeDownloader.downloadTrack(ytUrl, ytTemp) { prog, dl, tot ->
+                    updateDownloadProgress(downloadId, prog, dl, tot)
+                }
+                if (downloadResult.isSuccess) {
+                    if (targetAudioFile.exists()) targetAudioFile.delete()
+                    if (!ytTemp.renameTo(targetAudioFile)) {
+                        try {
+                            ytTemp.copyTo(targetAudioFile, overwrite = true)
+                            ytTemp.delete()
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        }
 
         if (cancelledIds.contains(downloadId)) {
             tempAudioFile.delete()
             return@withContext null
         }
 
-        if (targetAudioFile.exists()) targetAudioFile.delete()
-        tempAudioFile.renameTo(targetAudioFile)
+        if (downloadResult.isFailure) {
+            tempAudioFile.delete()
+            throw downloadResult.exceptionOrNull() ?: IllegalStateException("Could not download audio stream for ${track.title}")
+        }
+
+        if (tempAudioFile.exists()) {
+            if (targetAudioFile.exists()) targetAudioFile.delete()
+            if (!tempAudioFile.renameTo(targetAudioFile)) {
+                try {
+                    tempAudioFile.copyTo(targetAudioFile, overwrite = true)
+                    tempAudioFile.delete()
+                } catch (_: Exception) {}
+            }
+        }
 
         _downloads.update { current ->
             val existing = current[downloadId] ?: return@update current
             current + (downloadId to existing.copy(status = DownloadStatus.ENRICHING, progress = 0.85f))
         }
 
-        // 3. Fetch Lyrics (.lrc)
+        // Enrich metadata (clean title, canonical artist, album, year, genre, and high-res cover art)
+        val enriched = MetadataEnricher.enrich(
+            rawTitle = track.title,
+            rawArtist = track.artist,
+            fallbackThumbnailUrl = track.thumbnailUrl
+        )
+
+        // Fetch Lyrics (.lrc)
         val lrcFile = File(targetDir, "${safeFilename}.lrc")
         try {
             val durationSec = track.durationMs / 1000
             val lyrics = LrclibClient.fetchLyrics(
-                artist = track.artist,
-                title = track.title,
-                album = track.album.ifBlank { null },
+                title = enriched.title,
+                artist = enriched.artist,
+                album = enriched.album.ifBlank { null },
                 durationSeconds = if (durationSec > 0) durationSec else null
             )
             if (lyrics != null) {
@@ -325,11 +374,13 @@ class DownloadManager private constructor(private val context: Context) {
             }
         } catch (_: Exception) {}
 
-        // 4. Download Thumbnail Artwork
-        val artworkFile = File(targetDir, "${safeFilename}.jpg")
-        if (!track.thumbnailUrl.isNullOrBlank()) {
+        // Download cover art into internal app cache (keeps music folder free of loose image clutter)
+        val artworkCacheDir = File(context.cacheDir, "artwork").apply { mkdirs() }
+        val artworkFile = File(artworkCacheDir, "art_${downloadId.hashCode().toUInt().toString(16)}.jpg")
+        val artUrl = enriched.artworkUrl ?: track.thumbnailUrl
+        if (!artUrl.isNullOrBlank()) {
             try {
-                val req = Request.Builder().url(track.thumbnailUrl).build()
+                val req = Request.Builder().url(artUrl).build()
                 httpClient.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         resp.body?.byteStream()?.use { input ->
@@ -342,17 +393,41 @@ class DownloadManager private constructor(private val context: Context) {
             } catch (_: Exception) {}
         }
 
-        // 5. Register in Central Library without Duplicates
+        // Automatically delete any loose thumbnail in the target directory
+        val looseThumb = File(targetDir, "${safeFilename}.jpg")
+        if (looseThumb.exists()) {
+            try { looseThumb.delete() } catch (_: Exception) {}
+        }
+
+        // Register in Central Library without Duplicates
         val registeredSong = musicScanner.registerDownloadedTrack(
             audioFile = targetAudioFile,
-            title = track.title,
-            artist = track.artist,
-            album = track.album.ifBlank { "Downloads" },
+            title = enriched.title,
+            artist = enriched.artist,
+            album = enriched.album.ifBlank { "Downloads" },
             artworkFile = if (artworkFile.exists()) artworkFile else null,
             lrcFile = if (lrcFile.exists()) lrcFile else null
         )
 
-        // 6. Add to Recently Downloaded if Individual Song (Max 50)
+        // Notify Android system MediaScanner
+        try {
+            MediaScannerConnection.scanFile(
+                context,
+                arrayOf(targetAudioFile.absolutePath),
+                arrayOf("audio/*"),
+                null
+            )
+        } catch (_: Exception) {}
+
+        // Export copy to public standard Music folder (Music/OfflineMusic/)
+        exportToPublicMusicFolder(
+            audioFile = targetAudioFile,
+            title = enriched.title,
+            artist = enriched.artist,
+            album = enriched.album.ifBlank { "OfflineMusic" }
+        )
+
+        // Add to Recently Downloaded if Individual Song (Max 50)
         if (addToRecentlyDownloaded) {
             addToRecentlyDownloadedPlaylist(registeredSong.id)
         }
@@ -365,95 +440,64 @@ class DownloadManager private constructor(private val context: Context) {
         registeredSong
     }
 
-    private suspend fun resolveStream(track: DownloadableTrack): Pair<String, String>? {
-        if (track.source == DownloadSource.LUCIDA) {
-            val lucidaStream = LucidaDownloader.getDownloadStreamUrl(track.id)
-            if (lucidaStream != null) {
-                return Pair(lucidaStream, "flac")
+    private fun exportToPublicMusicFolder(
+        audioFile: File,
+        title: String,
+        artist: String,
+        album: String,
+        subDirName: String = "OfflineMusic"
+    ) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Audio.Media.DISPLAY_NAME, audioFile.name)
+                    put(android.provider.MediaStore.Audio.Media.TITLE, title)
+                    put(android.provider.MediaStore.Audio.Media.ARTIST, artist)
+                    put(android.provider.MediaStore.Audio.Media.ALBUM, album)
+                    put(android.provider.MediaStore.Audio.Media.MIME_TYPE, if (audioFile.extension.equals("flac", true)) "audio/flac" else "audio/mp4")
+                    put(android.provider.MediaStore.Audio.Media.RELATIVE_PATH, "Music/$subDirName/")
+                    put(android.provider.MediaStore.Audio.Media.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        audioFile.inputStream().use { input ->
+                            input.copyTo(out)
+                        }
+                    }
+                    values.clear()
+                    values.put(android.provider.MediaStore.Audio.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                }
+            } else {
+                val publicDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), subDirName)
+                publicDir.mkdirs()
+                val dest = File(publicDir, audioFile.name)
+                audioFile.copyTo(dest, overwrite = true)
+                MediaScannerConnection.scanFile(context, arrayOf(dest.absolutePath), null, null)
             }
-            // Fallback to YouTube if Lucida fails
-            val ytFallback = YouTubeDownloader.search("${track.artist} - ${track.title}", limit = 1).firstOrNull()
-            if (ytFallback != null) {
-                val ytStream = YouTubeDownloader.getAudioStreamUrl(ytFallback.id)
-                if (ytStream != null) return Pair(ytStream, "mp3")
-            }
-        } else {
-            val ytStream = YouTubeDownloader.getAudioStreamUrl(track.id)
-            if (ytStream != null) {
-                return Pair(ytStream, "mp3")
-            }
-            // Fallback to Lucida if YouTube fails
-            val lucidaFallback = LucidaDownloader.search("${track.artist} - ${track.title}", limit = 1).firstOrNull()
-            if (lucidaFallback != null) {
-                val lucidaStream = LucidaDownloader.getDownloadStreamUrl(lucidaFallback.id)
-                if (lucidaStream != null) return Pair(lucidaStream, "flac")
-            }
-        }
-        return null
+        } catch (_: Exception) {}
     }
 
-    private fun downloadFileWithProgress(url: String, destination: File, downloadId: String) {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .build()
-
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IllegalStateException("HTTP ${response.code}: Failed to download stream")
-            }
-            val body = response.body ?: throw IllegalStateException("Empty response body")
-            val totalBytes = body.contentLength()
-
-            val inputStream: InputStream = body.byteStream()
-            val outputStream = FileOutputStream(destination)
-
-            val buffer = ByteArray(8192)
-            var bytesRead: Int
-            var totalRead: Long = 0
-            var lastUpdate = System.currentTimeMillis()
-
-            try {
-                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                    if (cancelledIds.contains(downloadId)) {
-                        break
-                    }
-                    outputStream.write(buffer, 0, bytesRead)
-                    totalRead += bytesRead
-
-                    val now = System.currentTimeMillis()
-                    if (now - lastUpdate > 300) {
-                        lastUpdate = now
-                        val fraction = if (totalBytes > 0) {
-                            (totalRead.toFloat() / totalBytes.toFloat()).coerceIn(0f, 0.85f)
-                        } else {
-                            0.5f
-                        }
-                        _downloads.update { current ->
-                            val item = current[downloadId] ?: return@update current
-                            current + (downloadId to item.copy(
-                                progress = fraction,
-                                downloadedBytes = totalRead,
-                                totalBytes = totalBytes
-                            ))
-                        }
-
-                        val notifProgress = (fraction * 100).toInt()
-                        DownloadService.updateProgress(context, "Downloading ${_downloads.value[downloadId]?.trackTitle ?: "Music"}...", notifProgress)
-                    }
-                }
-                outputStream.flush()
-            } finally {
-                outputStream.close()
-                inputStream.close()
-            }
+    private fun updateDownloadProgress(downloadId: String, fraction: Float, downloadedBytes: Long, totalBytes: Long) {
+        val bounded = fraction.coerceIn(0f, 0.85f)
+        _downloads.update { current ->
+            val item = current[downloadId] ?: return@update current
+            current + (downloadId to item.copy(
+                progress = bounded,
+                downloadedBytes = downloadedBytes,
+                totalBytes = totalBytes
+            ))
         }
+        val notifProgress = (bounded * 100).toInt()
+        DownloadService.updateProgress(context, "Downloading ${_downloads.value[downloadId]?.trackTitle ?: "Music"}...", notifProgress)
     }
 
     private suspend fun addToRecentlyDownloadedPlaylist(trackId: String) {
         val playlistId = AppDatabase.PLAYLIST_ID_RECENTLY_DOWNLOADED
 
-        // Check if already in playlist
+        // Remove if previously entered to place at the top
         playlistDao.removeTrackFromPlaylist(playlistId, trackId)
 
         // Insert at the top (position 0)
@@ -473,7 +517,6 @@ class DownloadManager private constructor(private val context: Context) {
             val excessCount = count - MAX_RECENTLY_DOWNLOADED
             val toRemove = oldestIds.take(excessCount)
             for (oldId in toRemove) {
-                // Only removes playlist relation; never deletes the actual song file!
                 playlistDao.removeTrackFromPlaylist(playlistId, oldId)
             }
         }
@@ -489,6 +532,10 @@ class DownloadManager private constructor(private val context: Context) {
     }
 
     private fun sanitizeFilename(name: String): String {
-        return name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().take(80)
+        return name
+            .replace(Regex("[\\\\/:*?\"<>|“”„‟«»`~]"), "_")
+            .replace(Regex("[\\p{Cntrl}]"), "")
+            .trim()
+            .take(80)
     }
 }

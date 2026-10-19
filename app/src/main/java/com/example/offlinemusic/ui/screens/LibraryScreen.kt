@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Person
@@ -83,11 +84,12 @@ fun LibraryScreen(
 ) {
     var selectedFilter by remember { mutableStateOf(LibraryFilter.ALL) }
 
-    // Separate playlists into liked, custom, and folder
+    // Separate playlists into liked, recently downloaded, custom, and folder
     val likedPlaylist = playlists.firstOrNull { it.isLikedSpecial }
-    val userPlaylists = playlists.filter { !it.isLikedSpecial && it.playlistType == "USER" }
-    val folderPlaylists = playlists.filter { !it.isLikedSpecial && it.playlistType == "FOLDER" }
-    val otherPlaylists = playlists.filter { !it.isLikedSpecial && it.playlistType != "USER" && it.playlistType != "FOLDER" }
+    val downloadedPlaylist = playlists.firstOrNull { it.isRecentlyDownloadedSpecial }
+    val userPlaylists = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && it.playlistType == "USER" }
+    val folderPlaylists = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && it.playlistType == "FOLDER" }
+    val otherPlaylists = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && it.playlistType != "USER" && it.playlistType != "FOLDER" }
 
     Column(
         modifier = modifier
@@ -202,6 +204,22 @@ fun LibraryScreen(
                         iconTint = Color(0xFFE91E63),
                         onClick = { onPlaylistClick(likedPlaylist) },
                         onPlayClick = { onPlayPlaylistClick(likedPlaylist) }
+                    )
+                }
+            }
+
+            // Recently Downloaded Special Library (Shown for ALL, PLAYLISTS)
+            if ((selectedFilter == LibraryFilter.ALL || selectedFilter == LibraryFilter.PLAYLISTS) && downloadedPlaylist != null) {
+                item(key = "recently_downloaded") {
+                    LibraryItemRow(
+                        title = downloadedPlaylist.name,
+                        subtitle = "Auto-Playlist • ${downloadedPlaylist.songCount} downloaded songs",
+                        artworkUri = downloadedPlaylist.artworkUri,
+                        isRecentlyDownloadedSpecial = true,
+                        icon = Icons.Default.DownloadDone,
+                        iconTint = Color(0xFF00E676),
+                        onClick = { onPlaylistClick(downloadedPlaylist) },
+                        onPlayClick = { onPlayPlaylistClick(downloadedPlaylist) }
                     )
                 }
             }
@@ -367,6 +385,7 @@ private fun LibraryItemRow(
     onClick: () -> Unit,
     onPlayClick: (() -> Unit)?,
     isLikedSpecial: Boolean = false,
+    isRecentlyDownloadedSpecial: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -399,6 +418,24 @@ private fun LibraryItemRow(
                     Icon(
                         imageVector = Icons.Default.Favorite,
                         contentDescription = "Liked Songs",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            } else if (isRecentlyDownloadedSpecial) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(Color(0xFF00E676), Color(0xFF00B0FF), Color(0xFF304FFE))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DownloadDone,
+                        contentDescription = "Recently Downloaded",
                         tint = Color.White,
                         modifier = Modifier.size(24.dp)
                     )

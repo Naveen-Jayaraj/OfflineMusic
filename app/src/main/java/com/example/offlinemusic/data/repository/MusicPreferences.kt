@@ -18,7 +18,21 @@ class MusicPreferences(context: Context) {
         private const val KEY_SORT_ORDER = "key_sort_order"
         private const val KEY_LAST_PLAYED_ID = "key_last_played_id"
         private const val KEY_RECENT_SEARCHES = "key_recent_searches"
+        private const val KEY_DOWNLOAD_SOURCE = "key_download_source"
     }
+
+    var downloadSourcePreference: com.example.offlinemusic.downloader.models.DownloadSourceFilter
+        get() {
+            val str = prefs.getString(KEY_DOWNLOAD_SOURCE, com.example.offlinemusic.downloader.models.DownloadSourceFilter.BOTH.name)
+            return try {
+                com.example.offlinemusic.downloader.models.DownloadSourceFilter.valueOf(str ?: com.example.offlinemusic.downloader.models.DownloadSourceFilter.BOTH.name)
+            } catch (_: Exception) {
+                com.example.offlinemusic.downloader.models.DownloadSourceFilter.BOTH
+            }
+        }
+        set(value) {
+            prefs.edit().putString(KEY_DOWNLOAD_SOURCE, value.name).apply()
+        }
 
     fun getRecentSearches(): List<String> {
         val raw = prefs.getString(KEY_RECENT_SEARCHES, null) ?: return emptyList()

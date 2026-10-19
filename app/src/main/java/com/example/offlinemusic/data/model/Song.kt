@@ -16,7 +16,8 @@ data class Song(
     val uri: Uri,
     val relativePath: String,
     val trackNumber: Int? = null,
-    val artworkUri: Uri? = null
+    val artworkUri: Uri? = null,
+    val lyricsUri: String? = null
 ) {
     val formattedDuration: String
         get() {

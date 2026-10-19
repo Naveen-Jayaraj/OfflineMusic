@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PlayArrow
@@ -80,6 +81,29 @@ fun PlaylistCard(
                     Icon(
                         imageVector = Icons.Default.Favorite,
                         contentDescription = "Liked Songs",
+                        tint = Color.White,
+                        modifier = Modifier.size(54.dp)
+                    )
+                }
+            } else if (playlist.isRecentlyDownloadedSpecial) {
+                // Cool Download Gradient for Recently Downloaded
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFF00E676), // Vibrant Neon Emerald
+                                    Color(0xFF00B0FF), // Electric Cyan
+                                    Color(0xFF304FFE)  // Deep Indigo
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DownloadDone,
+                        contentDescription = "Recently Downloaded",
                         tint = Color.White,
                         modifier = Modifier.size(54.dp)
                     )

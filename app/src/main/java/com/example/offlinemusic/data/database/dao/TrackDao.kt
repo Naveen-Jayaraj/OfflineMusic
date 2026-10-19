@@ -78,6 +78,9 @@ interface TrackDao {
     @Query("DELETE FROM tracks WHERE file_uri IN (:uris)")
     suspend fun deleteTracksByUris(uris: List<String>)
 
+    @Query("UPDATE tracks SET lyrics_uri = :lyricsUri WHERE id = :trackId")
+    suspend fun updateLyricsUri(trackId: String, lyricsUri: String?)
+
     @Query("DELETE FROM tracks")
     suspend fun deleteAllTracks()
 }

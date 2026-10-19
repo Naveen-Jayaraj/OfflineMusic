@@ -115,4 +115,26 @@ object FuzzyMatcher {
         // Combined weighted score: Title has 65% weight, Artist has 35% weight
         return (titleScore * 0.65) + (artistScore * 0.35)
     }
+
+    fun <T> findBestMatch(
+        queryTitle: String,
+        queryArtist: String,
+        candidates: List<T>,
+        minThreshold: Double = 0.50,
+        extractor: (T) -> Pair<String, String>
+    ): T? {
+        var bestItem: T? = null
+        var bestScore = minThreshold
+
+        for (item in candidates) {
+            val (title, artist) = extractor(item)
+            val score = matchScore(queryTitle, queryArtist, title, artist)
+            if (score > bestScore) {
+                bestScore = score
+                bestItem = item
+            }
+        }
+        return bestItem
+    }
 }
+

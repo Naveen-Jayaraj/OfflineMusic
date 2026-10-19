@@ -26,7 +26,7 @@ object LrclibClient {
         title: String,
         artist: String,
         album: String? = null,
-        durationSeconds: Double? = null
+        durationSeconds: Number? = null
     ): SyncedLyrics? = withContext(Dispatchers.IO) {
         val cleanTitle = cleanTitle(title)
         val cleanArtist = cleanArtist(artist)
@@ -39,7 +39,7 @@ object LrclibClient {
             if (!album.isNullOrBlank() && album != "Single") {
                 urlBuilder?.addQueryParameter("album_name", album)
             }
-            if (durationSeconds != null && durationSeconds > 0) {
+            if (durationSeconds != null && durationSeconds.toDouble() > 0) {
                 urlBuilder?.addQueryParameter("duration", durationSeconds.toInt().toString())
             }
 
@@ -182,4 +182,23 @@ object LrclibClient {
         return artist.replace(Regex("(?i)\\b(vevo|official|channel|records|music)\\b"), "")
             .trim()
     }
+
+    fun saveToLrcFile(lyrics: SyncedLyrics, file: File) {
+        val content = if (lyrics.lines.isNotEmpty()) {
+            lyrics.lines.joinToString("\n") { line ->
+                val totalSec = line.timestampMs / 1000
+                val min = totalSec / 60
+                val sec = totalSec % 60
+                val ms = (line.timestampMs % 1000) / 10
+                String.format("[%02d:%02d.%02d]%s", min, sec, ms, line.text)
+            }
+        } else {
+            lyrics.plainLyrics ?: ""
+        }
+        if (content.isNotBlank()) {
+            file.parentFile?.mkdirs()
+            file.writeText(content)
+        }
+    }
 }
+

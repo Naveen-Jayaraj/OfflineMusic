@@ -55,11 +55,17 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.CircularProgressIndicator
 import com.example.offlinemusic.data.model.Album
 import com.example.offlinemusic.data.model.Playlist
 import com.example.offlinemusic.data.model.Song
+import com.example.offlinemusic.downloader.models.DownloadProgress
+import com.example.offlinemusic.downloader.models.DownloadableTrack
+import com.example.offlinemusic.downloader.models.SpotifyPlaylistInfo
 import com.example.offlinemusic.ui.SearchResults
 import com.example.offlinemusic.ui.components.ArtworkView
+import com.example.offlinemusic.ui.components.DownloadableTrackItem
+import com.example.offlinemusic.ui.components.SpotifyPlaylistPreviewCard
 
 @Composable
 fun SearchScreen(
@@ -80,6 +86,15 @@ fun SearchScreen(
     onEditSongClick: (Song) -> Unit,
     onSaveRecentSearch: (String) -> Unit,
     availableGenres: List<String> = emptyList(),
+    detectedSpotifyPlaylist: SpotifyPlaylistInfo? = null,
+    isFetchingSpotifyPlaylist: Boolean = false,
+    onDownloadSpotifyPlaylist: (SpotifyPlaylistInfo) -> Unit = {},
+    onlineSearchResults: List<DownloadableTrack> = emptyList(),
+    isOnlineSearching: Boolean = false,
+    downloads: Map<String, DownloadProgress> = emptyMap(),
+    onDownloadTrack: (DownloadableTrack) -> Unit = {},
+    onCancelDownload: (String) -> Unit = {},
+    onRetryDownload: (String, DownloadableTrack) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
@@ -314,33 +329,41 @@ fun SearchScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                val hasAnyResults = searchResults.artists.isNotEmpty() ||
-                        searchResults.songs.isNotEmpty() ||
-                        searchResults.playlists.isNotEmpty() ||
-                        searchResults.albums.isNotEmpty()
-
-                if (!hasAnyResults) {
+                // 0. Spotify Playlist Card if fetching or detected
+                if (isFetchingSpotifyPlaylist) {
                     item {
-                        Box(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = 40.dp),
-                            contentAlignment = Alignment.Center
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF1DB954).copy(alpha = 0.15f))
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "No results found for \"$searchQuery\"",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "Please check the spelling or try searching for another term.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                color = Color(0xFF1DB954),
+                                strokeWidth = 2.5.dp
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = "Identifying Spotify playlist & tracks...",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                color = Color(0xFF1DB954)
+                            )
                         }
+                    }
+                }
+
+                if (detectedSpotifyPlaylist != null) {
+                    item {
+                        val batchId = "spotify_playlist_${detectedSpotifyPlaylist.id}"
+                        SpotifyPlaylistPreviewCard(
+                            playlist = detectedSpotifyPlaylist,
+                            batchProgress = downloads[batchId],
+                            onDownload = { onDownloadSpotifyPlaylist(detectedSpotifyPlaylist) },
+                            onCancel = { onCancelDownload(batchId) }
+                        )
                     }
                 }
 
@@ -553,7 +576,9 @@ fun SearchScreen(
                             ArtworkView(
                                 artworkUri = playlist.artworkUri,
                                 size = 44.dp,
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(8.dp),
+                                isLikedSongsSpecial = playlist.isLikedSpecial,
+                                isRecentlyDownloadedSpecial = playlist.isRecentlyDownloadedSpecial
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -565,7 +590,7 @@ fun SearchScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "${if (playlist.isLikedSpecial) "Special" else if (playlist.playlistType == "FOLDER") "Folder Playlist" else "Playlist"} • ${playlist.songCount} songs",
+                                    text = "${if (playlist.isLikedSpecial) "Special • Liked" else if (playlist.isRecentlyDownloadedSpecial) "Special • Downloaded" else if (playlist.playlistType == "FOLDER") "Folder Playlist" else "Playlist"} • ${playlist.songCount} songs",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -619,6 +644,79 @@ fun SearchScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+                        }
+                    }
+                }
+
+                // 5. Online Downloads (YouTube & Lucida)
+                if (detectedSpotifyPlaylist == null && !isFetchingSpotifyPlaylist) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "ONLINE DOWNLOADS",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            if (isOnlineSearching) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Searching...",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (onlineSearchResults.isNotEmpty()) {
+                        items(onlineSearchResults, key = { "${it.source}_${it.id}" }) { onlineTrack ->
+                            DownloadableTrackItem(
+                                track = onlineTrack,
+                                downloadProgress = downloads[onlineTrack.id],
+                                onDownload = { onDownloadTrack(onlineTrack) },
+                                onCancel = { onCancelDownload(onlineTrack.id) },
+                                onRetry = { onRetryDownload(onlineTrack.id, onlineTrack) }
+                            )
+                        }
+                    } else if (!isOnlineSearching && searchResults.songs.isEmpty() && searchResults.artists.isEmpty() && searchResults.playlists.isEmpty() && searchResults.albums.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 30.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "No local or online songs found for \"$searchQuery\"",
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Check the song title, artist name, or paste a Spotify playlist link.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }

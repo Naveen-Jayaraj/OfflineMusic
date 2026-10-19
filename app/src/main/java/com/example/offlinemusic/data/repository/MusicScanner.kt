@@ -131,8 +131,38 @@ class MusicScanner(private val context: Context) {
             }
         }
 
-        // Deleted or inaccessible files detection
-        val deletedUris = cachedMap.keys.filter { it !in seenUris }
+        // Deleted or inaccessible files detection (Scoped safely to THIS tree only)
+        val treeUriString = treeUri.toString()
+        val treeSegment = treeUri.lastPathSegment ?: ""
+        val deletedUris = cachedMap.keys.filter { uriStr ->
+            if (uriStr in seenUris) return@filter false
+
+            // 1. If it is a file:// URI (downloaded songs or local files), check physical file existence
+            if (uriStr.startsWith("file://")) {
+                val path = Uri.parse(uriStr).path
+                if (path != null && File(path).exists()) {
+                    return@filter false // Physical file still exists on disk! Never delete!
+                }
+                true
+            } else if (uriStr.startsWith("content://")) {
+                // 2. Only consider content URIs that genuinely belong to THIS scanned folder tree
+                val belongsToThisTree = uriStr.startsWith(treeUriString) ||
+                        (treeSegment.isNotBlank() && uriStr.contains(Uri.encode(treeSegment)))
+
+                if (belongsToThisTree) {
+                    try {
+                        val doc = DocumentFile.fromSingleUri(context, Uri.parse(uriStr))
+                        doc == null || !doc.exists()
+                    } catch (_: Exception) {
+                        true
+                    }
+                } else {
+                    false // Belongs to a different folder source or system source; DO NOT touch!
+                }
+            } else {
+                false
+            }
+        }
         if (deletedUris.isNotEmpty()) {
             db.trackDao().deleteTracksByUris(deletedUris)
         }
@@ -464,6 +494,12 @@ class MusicScanner(private val context: Context) {
             } catch (_: Exception) {}
         }
 
+        // Detect .lrc file in same folder
+        val lrcDoc = try {
+            file.parentFile?.findFile("${defaultTitle}.lrc")
+        } catch (_: Exception) { null }
+        val detectedLyricsUri = lrcDoc?.uri?.toString()
+
         val artistParseResult = ArtistNormalizer.parseCredits(rawArtist)
 
         val trackEntity = TrackEntity(
@@ -480,7 +516,8 @@ class MusicScanner(private val context: Context) {
             artworkUri = artworkUri?.toString(),
             dateAdded = System.currentTimeMillis(),
             dateModified = dateModified,
-            relativePath = file.name ?: ""
+            relativePath = file.name ?: "",
+            lyricsUri = detectedLyricsUri
         )
 
         return ExtractedMetadata(
@@ -513,6 +550,120 @@ class MusicScanner(private val context: Context) {
         newGenre: String?,
         newArtworkUri: Uri?
     ): Song? = repository.updateTrackMetadata(trackId, newTitle, rawArtistString, newAlbum, newGenre, newArtworkUri)
+
+    suspend fun registerDownloadedTrack(
+        audioFile: File,
+        title: String,
+        artist: String,
+        album: String? = null,
+        artworkFile: File? = null,
+        lrcFile: File? = null
+    ): Song = withContext(Dispatchers.IO) {
+        val fileUri = Uri.fromFile(audioFile).toString()
+        val trackId = fileUri.hashCode().toUInt().toString(16)
+        val ext = audioFile.extension.lowercase().ifBlank { "mp3" }
+        val sizeBytes = audioFile.length()
+        val dateModified = audioFile.lastModified()
+
+        var durationMs = 0L
+        var artworkUri: Uri? = null
+        val mmr = MediaMetadataRetriever()
+        try {
+            mmr.setDataSource(audioFile.absolutePath)
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let {
+                durationMs = it
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { mmr.release() } catch (_: Exception) {}
+        }
+
+        if (artworkFile != null && artworkFile.exists()) {
+            artworkUri = getArtworkUri(artworkFile)
+        }
+
+        val finalLrcUri = if (lrcFile != null && lrcFile.exists()) {
+            Uri.fromFile(lrcFile).toString()
+        } else {
+            val siblingLrc = File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc")
+            if (siblingLrc.exists()) Uri.fromFile(siblingLrc).toString() else null
+        }
+
+        var albumId: String? = null
+        if (!album.isNullOrBlank() && !album.equals("Unknown Album", ignoreCase = true)) {
+            val normalizedAlbum = album.trim().lowercase()
+            val aid = "album_${normalizedAlbum.hashCode().toUInt().toString(16)}"
+            val albumEntity = AlbumEntity(
+                id = aid,
+                title = album.trim(),
+                normalizedTitle = normalizedAlbum,
+                albumArtist = artist,
+                artworkUri = artworkUri?.toString()
+            )
+            db.albumDao().insertOrUpdateAlbum(albumEntity)
+            albumId = aid
+        }
+
+        val normArtist = ArtistNormalizer.normalize(artist)
+        val artistId = ArtistNormalizer.generateArtistId(normArtist)
+        val artistEntity = ArtistEntity(
+            id = artistId,
+            name = artist.trim(),
+            normalizedName = normArtist,
+            metadataStatus = "CONFIRMED"
+        )
+        db.artistDao().insertOrUpdateArtist(artistEntity)
+
+        val trackEntity = TrackEntity(
+            id = trackId,
+            title = title.trim(),
+            normalizedTitle = title.trim().lowercase(),
+            durationMs = durationMs,
+            fileUri = fileUri,
+            format = ext,
+            sizeBytes = sizeBytes,
+            metadataStatus = "PARSED",
+            albumId = albumId,
+            artworkUri = artworkUri?.toString(),
+            dateAdded = System.currentTimeMillis(),
+            dateModified = dateModified,
+            relativePath = audioFile.name,
+            lyricsUri = finalLrcUri
+        )
+
+        db.withTransaction {
+            db.trackDao().insertTrack(trackEntity)
+            db.artistDao().insertTrackArtists(
+                listOf(
+                    TrackArtistEntity(
+                        trackId = trackId,
+                        artistId = artistId,
+                        creditedName = artist.trim(),
+                        artistRole = "PRIMARY",
+                        artistOrder = 0
+                    )
+                )
+            )
+        }
+
+        repository.getSongById(trackId) ?: Song(
+            id = trackId,
+            title = title.trim(),
+            artist = artist.trim(),
+            album = album ?: "Unknown Album",
+            albumFolder = album ?: "Downloads",
+            year = null,
+            genre = null,
+            durationMs = durationMs,
+            sizeBytes = sizeBytes,
+            dateModified = dateModified,
+            uri = Uri.fromFile(audioFile),
+            relativePath = audioFile.name,
+            artworkUri = artworkUri,
+            lyricsUri = finalLrcUri
+        )
+    }
+
     suspend fun clearCache() = withContext(Dispatchers.IO) {
         db.trackDao().deleteAllTracks()
     }

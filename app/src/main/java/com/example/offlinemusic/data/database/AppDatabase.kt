@@ -41,7 +41,7 @@ import com.example.offlinemusic.data.database.entities.TrackGenreEntity
         FolderSourceEntity::class,
         ArtistReviewQueueEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -59,6 +59,7 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         const val DATABASE_NAME = "offline_music.db"
         const val PLAYLIST_ID_LIKED = "liked_songs"
+        const val PLAYLIST_ID_RECENTLY_DOWNLOADED = "recently_downloaded"
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
@@ -70,7 +71,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
@@ -79,6 +80,19 @@ abstract class AppDatabase : RoomDatabase() {
                             db.execSQL("""
                                 INSERT OR IGNORE INTO playlists (id, name, description, playlist_type, created_at, sort_order)
                                 VALUES ('$PLAYLIST_ID_LIKED', 'Liked Songs', 'Your favorite tracks', 'LIKED', ${System.currentTimeMillis()}, 'DATE_ADDED')
+                            """.trimIndent())
+                            // Initialize permanent special Recently Downloaded playlist
+                            db.execSQL("""
+                                INSERT OR IGNORE INTO playlists (id, name, description, playlist_type, created_at, sort_order)
+                                VALUES ('$PLAYLIST_ID_RECENTLY_DOWNLOADED', 'Recently Downloaded', 'Songs downloaded to your device', 'DOWNLOADS', ${System.currentTimeMillis()}, 'DATE_ADDED')
+                            """.trimIndent())
+                        }
+
+                        override fun onOpen(db: SupportSQLiteDatabase) {
+                            super.onOpen(db)
+                            db.execSQL("""
+                                INSERT OR IGNORE INTO playlists (id, name, description, playlist_type, created_at, sort_order)
+                                VALUES ('$PLAYLIST_ID_RECENTLY_DOWNLOADED', 'Recently Downloaded', 'Songs downloaded to your device', 'DOWNLOADS', ${System.currentTimeMillis()}, 'DATE_ADDED')
                             """.trimIndent())
                         }
                     })
@@ -344,6 +358,12 @@ abstract class AppDatabase : RoomDatabase() {
 
                 // Finalize albums table name
                 db.execSQL("ALTER TABLE `albums_new` RENAME TO `albums`")
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `lyrics_uri` TEXT DEFAULT NULL")
             }
         }
     }

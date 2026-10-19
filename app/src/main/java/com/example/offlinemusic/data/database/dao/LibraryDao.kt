@@ -23,7 +23,8 @@ data class TrackWithDetails(
     val sizeBytes: Long,
     val dateModified: Long,
     val relativePath: String,
-    val albumId: String?
+    val albumId: String?,
+    val lyricsUri: String? = null
 )
 
 @Dao
@@ -52,7 +53,8 @@ interface LibraryDao {
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
-               t.album_id AS albumId
+               t.album_id AS albumId,
+               t.lyrics_uri AS lyricsUri
         FROM tracks t
         LEFT JOIN albums a ON t.album_id = a.id
         ORDER BY t.normalized_title ASC
@@ -82,7 +84,8 @@ interface LibraryDao {
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
-               t.album_id AS albumId
+               t.album_id AS albumId,
+               t.lyrics_uri AS lyricsUri
         FROM tracks t
         LEFT JOIN albums a ON t.album_id = a.id
         WHERE t.id = :trackId LIMIT 1
@@ -112,7 +115,8 @@ interface LibraryDao {
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
-               t.album_id AS albumId
+               t.album_id AS albumId,
+               t.lyrics_uri AS lyricsUri
         FROM tracks t
         LEFT JOIN albums a ON t.album_id = a.id
         WHERE t.album_id = :albumId
@@ -143,7 +147,8 @@ interface LibraryDao {
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
-               t.album_id AS albumId
+               t.album_id AS albumId,
+               t.lyrics_uri AS lyricsUri
         FROM tracks t
         INNER JOIN track_artists ta ON t.id = ta.track_id
         LEFT JOIN albums a ON t.album_id = a.id
@@ -175,7 +180,8 @@ interface LibraryDao {
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
-               t.album_id AS albumId
+               t.album_id AS albumId,
+               t.lyrics_uri AS lyricsUri
         FROM tracks t
         INNER JOIN playlist_tracks pt ON t.id = pt.track_id
         LEFT JOIN albums a ON t.album_id = a.id
@@ -193,3 +199,4 @@ interface LibraryDao {
     """)
     suspend fun getAlbumsForArtist(artistId: String): List<AlbumEntity>
 }
+

@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -478,14 +479,24 @@ fun SpotifyPlaylistPreviewCard(
 fun SyncedLyricsView(
     lyrics: SyncedLyrics,
     currentActiveIndex: Int,
+    onLineClick: ((Long) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (!lyrics.isSynced) {
         // Plain lyrics fallback
-        Box(modifier = modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
-                text = lyrics.plainLyrics ?: "No lyrics available",
-                style = MaterialTheme.typography.bodyMedium,
+                text = lyrics.plainLyrics ?: "No lyrics available for this song",
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 17.sp,
+                    lineHeight = 26.sp,
+                    fontWeight = FontWeight.Medium
+                ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
@@ -495,35 +506,49 @@ fun SyncedLyricsView(
 
     val listState = rememberLazyListState()
 
-    // Auto-scroll to active line
+    // Smoothly auto-scroll to keep the active line centered
     LaunchedEffect(currentActiveIndex) {
         if (currentActiveIndex in lyrics.lines.indices) {
-            listState.animateScrollToItem((currentActiveIndex - 2).coerceAtLeast(0))
+            val targetIdx = (currentActiveIndex - 2).coerceAtLeast(0)
+            listState.animateScrollToItem(targetIdx)
         }
     }
 
     LazyColumn(
         state = listState,
+        contentPadding = PaddingValues(top = 80.dp, bottom = 120.dp, start = 16.dp, end = 16.dp),
         modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         itemsIndexed(lyrics.lines) { index, line ->
             val isActive = index == currentActiveIndex
-            val color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-            val size = if (isActive) 22.sp else 16.sp
-            val weight = if (isActive) FontWeight.ExtraBold else FontWeight.Medium
+            val color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+            val size = if (isActive) 24.sp else 18.sp
+            val weight = if (isActive) FontWeight.ExtraBold else FontWeight.SemiBold
 
-            Text(
-                text = line.text,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = size,
-                    fontWeight = weight,
-                    lineHeight = 28.sp
-                ),
-                color = color,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(enabled = onLineClick != null) {
+                        onLineClick?.invoke(line.timestampMs)
+                    }
+                    .padding(vertical = 4.dp, horizontal = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = line.text,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontSize = size,
+                        fontWeight = weight,
+                        lineHeight = 32.sp,
+                        letterSpacing = (-0.3).sp
+                    ),
+                    color = color,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 }

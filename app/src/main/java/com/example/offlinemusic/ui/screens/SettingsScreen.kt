@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
@@ -47,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.offlinemusic.downloader.models.DownloadSourceFilter
 
 @Composable
 fun SettingsScreen(
@@ -60,6 +63,8 @@ fun SettingsScreen(
     onChangeFolderClick: () -> Unit,
     onRescanClick: () -> Unit,
     onReviewArtistsClick: () -> Unit,
+    downloadSourceFilter: DownloadSourceFilter = DownloadSourceFilter.BOTH,
+    onDownloadSourceFilterChange: (DownloadSourceFilter) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -227,7 +232,85 @@ fun SettingsScreen(
             }
         }
 
-        // 6. About & Privacy
+        // 6. Download Sources & Search Engine
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "DOWNLOAD SOURCES & SEARCH ENGINE",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                SettingsGroupCard {
+                    DownloadSourceFilter.values().forEachIndexed { index, option ->
+                        if (index > 0) {
+                            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                        }
+                        val isSelected = downloadSourceFilter == option
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onDownloadSourceFilterChange(option) }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        else MaterialTheme.colorScheme.surfaceVariant
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = null,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = option.displayName,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    ),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = when (option) {
+                                        DownloadSourceFilter.BOTH -> "Search and download from both YouTube and Lucida Lossless"
+                                        DownloadSourceFilter.YOUTUBE_ONLY -> "Only search and stream from YouTube Audio"
+                                        DownloadSourceFilter.LUCIDA_ONLY -> "Only search and stream lossless audio from Lucida"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 7. About & Privacy
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(

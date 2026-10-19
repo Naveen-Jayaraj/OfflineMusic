@@ -63,6 +63,15 @@ fun MainMusicScreen(
     val artistReviewPrompt by viewModel.currentArtistReview.collectAsState()
     val songForEditMetadata by viewModel.songForEditMetadata.collectAsState()
 
+    val downloads by viewModel.downloads.collectAsState()
+    val onlineSearchResults by viewModel.onlineSearchResults.collectAsState()
+    val isOnlineSearching by viewModel.isOnlineSearching.collectAsState()
+    val detectedSpotifyPlaylist by viewModel.detectedSpotifyPlaylist.collectAsState()
+    val isFetchingSpotifyPlaylist by viewModel.isFetchingSpotifyPlaylist.collectAsState()
+    val downloadSourceFilter by viewModel.downloadSourceFilter.collectAsState()
+    val currentLyrics by viewModel.currentLyrics.collectAsState()
+    val currentLyricsIndex by viewModel.currentLyricsIndex.collectAsState()
+
     // Dialog states for customizable playlists
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var songForAddToPlaylist by remember { mutableStateOf<Song?>(null) }
@@ -209,7 +218,16 @@ fun MainMusicScreen(
                                     onSongAddToPlaylistClick = { songForAddToPlaylist = it },
                                     onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
                                     onSaveRecentSearch = { query -> viewModel.addRecentSearch(query) },
-                                    availableGenres = availableGenres
+                                    availableGenres = availableGenres,
+                                    detectedSpotifyPlaylist = detectedSpotifyPlaylist,
+                                    isFetchingSpotifyPlaylist = isFetchingSpotifyPlaylist,
+                                    onDownloadSpotifyPlaylist = { viewModel.downloadSpotifyPlaylist(it) },
+                                    onlineSearchResults = onlineSearchResults,
+                                    isOnlineSearching = isOnlineSearching,
+                                    downloads = downloads,
+                                    onDownloadTrack = { viewModel.downloadTrack(it) },
+                                    onCancelDownload = { viewModel.cancelDownload(it) },
+                                    onRetryDownload = { id, track -> viewModel.retryDownload(id, track) }
                                 )
                             }
                             BottomNavTab.LIBRARY -> {
@@ -236,7 +254,9 @@ fun MainMusicScreen(
                                     isLoading = isLoading,
                                     onChangeFolderClick = onPickFolderClick,
                                     onRescanClick = { viewModel.rescan() },
-                                    onReviewArtistsClick = { viewModel.triggerManualReview() }
+                                    onReviewArtistsClick = { viewModel.triggerManualReview() },
+                                    downloadSourceFilter = downloadSourceFilter,
+                                    onDownloadSourceFilterChange = { viewModel.setDownloadSourceFilter(it) }
                                 )
                             }
                         }
@@ -382,7 +402,9 @@ fun MainMusicScreen(
                 onStopClick = { viewModel.playerManager.stopPlayback() },
                 onPlayQueueIndex = { viewModel.playerManager.playSongAtIndex(it) },
                 onDismiss = { viewModel.hideFullPlayer() },
-                onEditMetadataClick = { currentSong?.let { viewModel.openMetadataEditor(it) } }
+                onEditMetadataClick = { currentSong?.let { viewModel.openMetadataEditor(it) } },
+                lyrics = currentLyrics,
+                currentLyricsIndex = currentLyricsIndex
             )
         }
 

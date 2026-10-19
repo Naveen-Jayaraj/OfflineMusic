@@ -233,7 +233,8 @@ object LucidaDownloader {
             // Poll status until completed
             val statusUrl = "$BASE_URL/api/load?url=%2Fapi%2Ffetch%2Frequest%2F$handoff&force=$serverName"
             val startTime = System.currentTimeMillis()
-            val timeout = 120_000L // 2 minutes
+            val timeout = 25_000L // 25 seconds for fast fallback
+            android.util.Log.d("LucidaDownloader", "Polling Lucida rip status for handoff: $handoff")
 
             var completed = false
             while (System.currentTimeMillis() - startTime < timeout) {
@@ -250,14 +251,17 @@ object LucidaDownloader {
                 val status = stJson.optString("status", "")
                 if (status == "completed") {
                     completed = true
+                    android.util.Log.d("LucidaDownloader", "Lucida stream rip completed successfully")
                     break
                 } else if (status == "error") {
                     val msg = stJson.optString("message", "Unknown error during stream rip")
+                    android.util.Log.w("LucidaDownloader", "Lucida rip error: $msg")
                     return@withContext Result.failure(Exception("Lucida rip failed: $msg"))
                 }
             }
 
             if (!completed) {
+                android.util.Log.w("LucidaDownloader", "Lucida stream timed out after 25s")
                 return@withContext Result.failure(Exception("Lucida stream timed out"))
             }
 

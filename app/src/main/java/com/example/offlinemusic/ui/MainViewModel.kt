@@ -19,6 +19,20 @@ import com.example.offlinemusic.data.database.entities.ArtistEntity
 import com.example.offlinemusic.data.repository.ArtistNormalizer
 import com.example.offlinemusic.ui.components.ArtistReviewPromptData
 import com.example.offlinemusic.ui.navigation.BottomNavTab
+import com.example.offlinemusic.downloader.DownloadManager
+import com.example.offlinemusic.downloader.engine.LrclibClient
+import com.example.offlinemusic.downloader.engine.LucidaDownloader
+import com.example.offlinemusic.downloader.engine.SpotifyPlaylistClient
+import com.example.offlinemusic.downloader.engine.YouTubeDownloader
+import com.example.offlinemusic.downloader.models.DownloadProgress
+import com.example.offlinemusic.downloader.models.DownloadSourceFilter
+import com.example.offlinemusic.downloader.models.DownloadableTrack
+import com.example.offlinemusic.downloader.models.SpotifyPlaylistInfo
+import com.example.offlinemusic.downloader.models.SyncedLyrics
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -110,6 +124,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedGenreFilter = MutableStateFlow<String?>(null)
     val selectedGenreFilter: StateFlow<String?> = _selectedGenreFilter.asStateFlow()
 
+    val downloadManager = DownloadManager.getInstance(application)
+    val downloads: StateFlow<Map<String, DownloadProgress>> = downloadManager.downloads
+
+    private val _downloadSourceFilter = MutableStateFlow(preferences.downloadSourcePreference)
+    val downloadSourceFilter: StateFlow<DownloadSourceFilter> = _downloadSourceFilter.asStateFlow()
+
+    private val _onlineSearchResults = MutableStateFlow<List<DownloadableTrack>>(emptyList())
+    val onlineSearchResults: StateFlow<List<DownloadableTrack>> = _onlineSearchResults.asStateFlow()
+
+    private val _isOnlineSearching = MutableStateFlow(false)
+    val isOnlineSearching: StateFlow<Boolean> = _isOnlineSearching.asStateFlow()
+
+    private val _detectedSpotifyPlaylist = MutableStateFlow<SpotifyPlaylistInfo?>(null)
+    val detectedSpotifyPlaylist: StateFlow<SpotifyPlaylistInfo?> = _detectedSpotifyPlaylist.asStateFlow()
+
+    private val _isFetchingSpotifyPlaylist = MutableStateFlow(false)
+    val isFetchingSpotifyPlaylist: StateFlow<Boolean> = _isFetchingSpotifyPlaylist.asStateFlow()
+
+    private val _currentLyrics = MutableStateFlow<SyncedLyrics?>(null)
+    val currentLyrics: StateFlow<SyncedLyrics?> = _currentLyrics.asStateFlow()
+
+    private val _currentLyricsIndex = MutableStateFlow(-1)
+    val currentLyricsIndex: StateFlow<Int> = _currentLyricsIndex.asStateFlow()
+
+    private var onlineSearchJob: Job? = null
+
     // Filtered Playlists for main Spotify-style view (Home Screen)
     val filteredPlaylists: StateFlow<List<Playlist>> = combine(
         _allPlaylists,
@@ -123,9 +163,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             playlists.filter { it.name.lowercase().contains(q) || (it.description?.lowercase()?.contains(q) == true) }
         }
 
-        // Liked Songs always appears first
+        // Liked Songs always appears first, followed by Recently Downloaded
         val liked = filtered.filter { it.isLikedSpecial }
-        val others = filtered.filter { !it.isLikedSpecial }
+        val downloaded = filtered.filter { it.isRecentlyDownloadedSpecial }
+        val others = filtered.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial }
 
         val sortedOthers = when (sort.sortBy) {
             SortBy.TITLE, SortBy.ALBUM -> {
@@ -150,7 +191,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        liked + sortedOthers
+        liked + downloaded + sortedOthers
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Filtered Albums for albums listing / search
@@ -293,6 +334,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _isLoading.value = true
                 }
                 rescanFolder(savedUri, forceFullRescan = false, isBackgroundSync = cached.albums.isNotEmpty())
+            }
+        }
+
+        // Observe current song changes to load synchronized lyrics
+        viewModelScope.launch {
+            playerManager.currentSong.collect { song ->
+                loadLyricsForSong(song)
+            }
+        }
+
+        // Observe current position to update active lyrics line
+        viewModelScope.launch {
+            playerManager.currentPositionMs.collect { pos ->
+                val lyrics = _currentLyrics.value
+                if (lyrics != null && lyrics.isSynced) {
+                    _currentLyricsIndex.value = lyrics.findActiveLineIndex(pos)
+                }
             }
         }
     }
@@ -464,7 +522,134 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
+        triggerOnlineSearch(query)
     }
+
+    fun setDownloadSourceFilter(filter: DownloadSourceFilter) {
+        _downloadSourceFilter.value = filter
+        preferences.downloadSourcePreference = filter
+        triggerOnlineSearch(_searchQuery.value)
+    }
+
+    fun downloadTrack(track: DownloadableTrack) {
+        downloadManager.downloadTrack(track)
+    }
+
+    fun downloadSpotifyPlaylist(playlist: SpotifyPlaylistInfo) {
+        downloadManager.downloadSpotifyPlaylist(playlist)
+    }
+
+    fun cancelDownload(id: String) {
+        downloadManager.cancelDownload(id)
+    }
+
+    fun retryDownload(id: String, track: DownloadableTrack) {
+        downloadManager.retryDownload(id, track)
+    }
+
+    private fun triggerOnlineSearch(query: String) {
+        onlineSearchJob?.cancel()
+        val trimmed = query.trim()
+
+        if (SpotifyPlaylistClient.isSpotifyPlaylistUrl(trimmed)) {
+            _onlineSearchResults.value = emptyList()
+            _isOnlineSearching.value = false
+            _isFetchingSpotifyPlaylist.value = true
+            _detectedSpotifyPlaylist.value = null
+
+            onlineSearchJob = viewModelScope.launch(Dispatchers.IO) {
+                val cleanId = SpotifyPlaylistClient.extractPlaylistId(trimmed) ?: trimmed
+                val info = SpotifyPlaylistClient.fetchPlaylist(cleanId).getOrNull()
+                _detectedSpotifyPlaylist.value = info
+                _isFetchingSpotifyPlaylist.value = false
+            }
+            return
+        }
+
+        _detectedSpotifyPlaylist.value = null
+        _isFetchingSpotifyPlaylist.value = false
+
+        if (trimmed.length < 2) {
+            _onlineSearchResults.value = emptyList()
+            _isOnlineSearching.value = false
+            return
+        }
+
+        onlineSearchJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(350)
+            _isOnlineSearching.value = true
+
+            try {
+                val filter = _downloadSourceFilter.value
+                val results = when (filter) {
+                    DownloadSourceFilter.YOUTUBE_ONLY -> {
+                        YouTubeDownloader.search(trimmed, limit = 15)
+                    }
+                    DownloadSourceFilter.LUCIDA_ONLY -> {
+                        LucidaDownloader.search(trimmed, limit = 15)
+                    }
+                    DownloadSourceFilter.BOTH -> {
+                        val ytDef = async { YouTubeDownloader.search(trimmed, limit = 10) }
+                        val lucidaDef = async { LucidaDownloader.search(trimmed, limit = 10) }
+                        val yt = try { ytDef.await() } catch (_: Exception) { emptyList() }
+                        val lucida = try { lucidaDef.await() } catch (_: Exception) { emptyList() }
+                        (yt + lucida).distinctBy { "${it.title.lowercase()}_${it.artist.lowercase()}" }
+                    }
+                }
+                _onlineSearchResults.value = results
+            } catch (e: Exception) {
+                _onlineSearchResults.value = emptyList()
+            } finally {
+                _isOnlineSearching.value = false
+            }
+        }
+    }
+
+    private fun loadLyricsForSong(song: Song?) {
+        _currentLyrics.value = null
+        _currentLyricsIndex.value = -1
+        if (song == null) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val lyricsUri = song.lyricsUri
+            if (!lyricsUri.isNullOrBlank()) {
+                try {
+                    val file = File(Uri.parse(lyricsUri).path ?: lyricsUri)
+                    if (file.exists()) {
+                        _currentLyrics.value = LrclibClient.parseLrcContent(file.readText())
+                        return@launch
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // Sibling .lrc file check
+            try {
+                val songPath = song.uri.path
+                if (songPath != null) {
+                    val songFile = File(songPath)
+                    val siblingLrc = File(songFile.parentFile, "${songFile.nameWithoutExtension}.lrc")
+                    if (siblingLrc.exists()) {
+                        _currentLyrics.value = LrclibClient.parseLrcContent(siblingLrc.readText())
+                        return@launch
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // Try fetching from LRCLIB online
+            try {
+                val fetched = LrclibClient.fetchLyrics(
+                    artist = song.artist,
+                    title = song.title,
+                    album = song.album,
+                    durationSeconds = if (song.durationMs > 0) song.durationMs / 1000 else null
+                )
+                if (fetched != null) {
+                    _currentLyrics.value = fetched
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
 
     fun setSortOption(option: SortOption) {
         _sortOption.value = option

@@ -76,6 +76,9 @@ dependencies {
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
 
+    // HTTP Client for online searching, Spotify playlist parsing & song downloading
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     // WorkManager (Background processing & metadata enrichment)
     implementation(libs.androidx.work.runtime.ktx)
 

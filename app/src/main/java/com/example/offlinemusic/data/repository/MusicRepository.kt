@@ -736,7 +736,8 @@ class MusicRepository(private val context: Context) {
             uri = Uri.parse(fileUri),
             relativePath = relativePath,
             trackNumber = trackNumber,
-            artworkUri = artworkUri?.let { Uri.parse(it) }
+            artworkUri = artworkUri?.let { Uri.parse(it) },
+            lyricsUri = lyricsUri
         )
     }
 
@@ -755,7 +756,8 @@ class MusicRepository(private val context: Context) {
             uri = Uri.parse(fileUri),
             relativePath = relativePath,
             trackNumber = trackNumber,
-            artworkUri = artworkUri?.let { Uri.parse(it) }
+            artworkUri = artworkUri?.let { Uri.parse(it) },
+            lyricsUri = lyricsUri
         )
     }
 
