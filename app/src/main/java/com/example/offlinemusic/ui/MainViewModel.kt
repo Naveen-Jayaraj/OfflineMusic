@@ -109,6 +109,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedArtistProfile = MutableStateFlow<ArtistProfile?>(null)
     val selectedArtistProfile: StateFlow<ArtistProfile?> = _selectedArtistProfile.asStateFlow()
 
+    private val _artistChooserList = MutableStateFlow<List<String>?>(null)
+    val artistChooserList: StateFlow<List<String>?> = _artistChooserList.asStateFlow()
+
     private val _songForEditMetadata = MutableStateFlow<Song?>(null)
     val songForEditMetadata: StateFlow<Song?> = _songForEditMetadata.asStateFlow()
 
@@ -150,23 +153,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var onlineSearchJob: Job? = null
 
-    // Filtered Playlists for main Spotify-style view (Home Screen)
+    // Sorted Playlists for main Spotify-style view (Home & Library screens)
     val filteredPlaylists: StateFlow<List<Playlist>> = combine(
         _allPlaylists,
-        _searchQuery,
         _sortOption
-    ) { playlists, query, sort ->
-        val filtered = if (query.isBlank()) {
-            playlists
-        } else {
-            val q = query.trim().lowercase()
-            playlists.filter { it.name.lowercase().contains(q) || (it.description?.lowercase()?.contains(q) == true) }
-        }
-
+    ) { playlists, sort ->
         // Liked Songs always appears first, followed by Recently Downloaded
-        val liked = filtered.filter { it.isLikedSpecial }
-        val downloaded = filtered.filter { it.isRecentlyDownloadedSpecial }
-        val others = filtered.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial }
+        val liked = playlists.filter { it.isLikedSpecial }
+        val downloaded = playlists.filter { it.isRecentlyDownloadedSpecial }
+        val others = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial }
 
         val sortedOthers = when (sort.sortBy) {
             SortBy.TITLE, SortBy.ALBUM -> {
@@ -699,9 +694,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun handleArtistClick(artistString: String) {
+        val collaborators = ArtistNormalizer.splitCollaborators(artistString)
+            .map { ArtistNormalizer.resolveCanonicalName(it) }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        if (collaborators.size > 1) {
+            _artistChooserList.value = collaborators
+        } else if (collaborators.isNotEmpty()) {
+            openArtistProfile(collaborators.first())
+        }
+    }
+
+    fun closeArtistChooser() {
+        _artistChooserList.value = null
+    }
+
     fun openArtistProfile(artistName: String) {
         viewModelScope.launch {
-            val profile = scanner.getArtistProfile(artistName)
+            val collaborators = ArtistNormalizer.splitCollaborators(artistName)
+                .map { ArtistNormalizer.resolveCanonicalName(it) }
+                .filter { it.isNotBlank() }
+            val targetName = if (collaborators.isNotEmpty()) collaborators.first() else artistName
+            val profile = scanner.getArtistProfile(targetName)
             _selectedArtistProfile.value = profile
         }
     }
@@ -768,6 +784,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updatePlaylistDescription(playlistId: String, newDescription: String?) {
+        viewModelScope.launch {
+            scanner.repository.updatePlaylistDescription(playlistId, newDescription)
+            val updated = scanner.repository.getPlaylistWithSongs(playlistId)
+            if (_selectedPlaylistDetail.value?.id == playlistId && updated != null) {
+                _selectedPlaylistDetail.value = updated
+            } else if (_selectedPlaylistDetail.value?.id == playlistId) {
+                _selectedPlaylistDetail.value = _selectedPlaylistDetail.value?.copy(description = newDescription)
+            }
+        }
+    }
+
+    fun pausePlayback() {
+        playerManager.pause()
+    }
+
+    fun togglePlayPause() {
+        playerManager.togglePlayPause()
+    }
+
     fun updatePlaylistArtwork(playlistId: String, artworkUri: Uri?) {
         viewModelScope.launch {
             scanner.repository.updatePlaylistArtwork(playlistId, artworkUri)
@@ -776,6 +812,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _selectedPlaylistDetail.value = updated
             }
         }
+    }
+
+    fun addToQueue(song: Song) {
+        playerManager.addToQueue(song)
     }
 
     fun playPlaylist(playlist: Playlist) {

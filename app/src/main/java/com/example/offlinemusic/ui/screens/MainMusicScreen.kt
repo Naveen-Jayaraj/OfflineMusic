@@ -20,6 +20,7 @@ import com.example.offlinemusic.data.model.Song
 import com.example.offlinemusic.ui.MainViewModel
 import com.example.offlinemusic.ui.components.AddToPlaylistDialog
 import com.example.offlinemusic.ui.components.AddSongsToPlaylistSheet
+import com.example.offlinemusic.ui.components.ArtistChooserDialog
 import com.example.offlinemusic.ui.components.ArtistConfirmationDialog
 import com.example.offlinemusic.ui.components.BottomNavBar
 import com.example.offlinemusic.ui.components.CreatePlaylistDialog
@@ -71,6 +72,7 @@ fun MainMusicScreen(
     val downloadSourceFilter by viewModel.downloadSourceFilter.collectAsState()
     val currentLyrics by viewModel.currentLyrics.collectAsState()
     val currentLyricsIndex by viewModel.currentLyricsIndex.collectAsState()
+    val artistChooserList by viewModel.artistChooserList.collectAsState()
 
     // Dialog states for customizable playlists
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
@@ -131,13 +133,16 @@ fun MainMusicScreen(
                             onBackClick = { viewModel.closePlaylistDetail() },
                             onSongClick = { song, songs -> viewModel.playSong(song, songs) },
                             onPlayAllClick = { viewModel.playPlaylist(selectedPlaylistDetail!!) },
+                            onPauseClick = { viewModel.pausePlayback() },
                             onShuffleAllClick = { viewModel.shufflePlaylist(selectedPlaylistDetail!!) },
                             onAddSongsClick = { showAddSongsToPlaylist = selectedPlaylistDetail },
                             onRemoveSongClick = { song -> viewModel.removeSongFromPlaylist(selectedPlaylistDetail!!.id, song.id) },
                             onDeletePlaylistClick = { viewModel.deletePlaylist(selectedPlaylistDetail!!.id) },
                             onRenamePlaylistClick = { newName -> viewModel.updatePlaylistName(selectedPlaylistDetail!!.id, newName) },
+                            onEditDescriptionClick = { newDesc -> viewModel.updatePlaylistDescription(selectedPlaylistDetail!!.id, newDesc) },
                             onChangeCoverClick = { newArtUri -> viewModel.updatePlaylistArtwork(selectedPlaylistDetail!!.id, newArtUri) },
                             onAddToAnotherPlaylistClick = { song -> songForAddToPlaylist = song },
+                            onAddToQueueClick = { song -> viewModel.addToQueue(song) },
                             onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
                             onArtistClick = { viewModel.openArtistProfile(it) }
                         )
@@ -152,9 +157,11 @@ fun MainMusicScreen(
                             onBackClick = { viewModel.closeAlbumDetail() },
                             onSongClick = { song, albumSongs -> viewModel.playSong(song, albumSongs) },
                             onPlayAllClick = { viewModel.playAlbum(selectedAlbumDetail!!) },
+                            onPauseClick = { viewModel.pausePlayback() },
                             onShuffleAllClick = { viewModel.shuffleAlbum(selectedAlbumDetail!!) },
                             onEditAlbumName = { newName -> viewModel.updateAlbumName(selectedAlbumDetail!!.id, newName) },
                             onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
+                            onAddToQueueClick = { song -> viewModel.addToQueue(song) },
                             onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
                             onArtistClick = { viewModel.openArtistProfile(it) }
                         )
@@ -172,6 +179,7 @@ fun MainMusicScreen(
                             onShuffleAllClick = { viewModel.shuffleArtist(selectedArtistProfile!!) },
                             onAlbumClick = { album -> viewModel.openAlbumDetail(album) },
                             onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
+                            onAddToQueueClick = { song -> viewModel.addToQueue(song) },
                             onEditSongClick = { song -> viewModel.openMetadataEditor(song) }
                         )
                     }
@@ -216,6 +224,7 @@ fun MainMusicScreen(
                                     onAlbumClick = { viewModel.openAlbumDetail(it) },
                                     onArtistClick = { viewModel.openArtistProfile(it) },
                                     onSongAddToPlaylistClick = { songForAddToPlaylist = it },
+                                    onAddToQueueClick = { viewModel.addToQueue(it) },
                                     onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
                                     onSaveRecentSearch = { query -> viewModel.addRecentSearch(query) },
                                     availableGenres = availableGenres,
@@ -256,7 +265,8 @@ fun MainMusicScreen(
                                     onRescanClick = { viewModel.rescan() },
                                     onReviewArtistsClick = { viewModel.triggerManualReview() },
                                     downloadSourceFilter = downloadSourceFilter,
-                                    onDownloadSourceFilterChange = { viewModel.setDownloadSourceFilter(it) }
+                                    onDownloadSourceFilterChange = { viewModel.setDownloadSourceFilter(it) },
+                                    onNavigateToTab = { viewModel.selectTab(it) }
                                 )
                             }
                         }
@@ -282,7 +292,8 @@ fun MainMusicScreen(
                         onPlayPauseClick = { viewModel.playerManager.togglePlayPause() },
                         onSkipNextClick = { viewModel.playerManager.skipToNext() },
                         onStopClick = { viewModel.playerManager.stopPlayback() },
-                        onExpandClick = { viewModel.showFullPlayer() }
+                        onExpandClick = { viewModel.showFullPlayer() },
+                        onArtistClick = { viewModel.handleArtistClick(it) }
                     )
                 }
 
@@ -402,9 +413,24 @@ fun MainMusicScreen(
                 onStopClick = { viewModel.playerManager.stopPlayback() },
                 onPlayQueueIndex = { viewModel.playerManager.playSongAtIndex(it) },
                 onDismiss = { viewModel.hideFullPlayer() },
+                onArtistClick = { artistName ->
+                    viewModel.handleArtistClick(artistName)
+                },
                 onEditMetadataClick = { currentSong?.let { viewModel.openMetadataEditor(it) } },
                 lyrics = currentLyrics,
                 currentLyricsIndex = currentLyricsIndex
+            )
+        }
+
+        if (artistChooserList != null) {
+            ArtistChooserDialog(
+                artists = artistChooserList!!,
+                onSelectArtist = { chosenArtist ->
+                    viewModel.closeArtistChooser()
+                    viewModel.hideFullPlayer()
+                    viewModel.openArtistProfile(chosenArtist)
+                },
+                onDismiss = { viewModel.closeArtistChooser() }
             )
         }
 

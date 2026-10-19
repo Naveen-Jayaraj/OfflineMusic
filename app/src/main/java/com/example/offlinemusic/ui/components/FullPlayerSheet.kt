@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -95,6 +96,7 @@ fun FullPlayerSheet(
     onPlayQueueIndex: (Int) -> Unit,
     onDismiss: () -> Unit,
     onEditMetadataClick: () -> Unit = {},
+    onArtistClick: ((String) -> Unit)? = null,
     lyrics: com.example.offlinemusic.downloader.models.SyncedLyrics? = null,
     currentLyricsIndex: Int = -1,
     modifier: Modifier = Modifier
@@ -251,10 +253,16 @@ fun FullPlayerSheet(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = song.artist,
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable(enabled = onArtistClick != null) {
+                                        onDismiss()
+                                        onArtistClick?.invoke(song.artist)
+                                    }
                             )
                         }
 
@@ -594,11 +602,12 @@ private fun SpotifyLyricsPreviewCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .defaultMinSize(minHeight = 225.dp)
+            .clip(RoundedCornerShape(24.dp))
             .background(cardGradient)
-            .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(22.dp))
+            .border(1.2.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
             .clickable { onClick() }
-            .padding(20.dp)
+            .padding(horizontal = 22.dp, vertical = 20.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             // Card Header: "Lyrics" title + Expand Icon
@@ -612,13 +621,14 @@ private fun SpotifyLyricsPreviewCard(
                         imageVector = Icons.Default.MusicNote,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Lyrics",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.ExtraBold,
+                            fontSize = 18.sp,
                             letterSpacing = 0.5.sp
                         ),
                         color = Color.White
@@ -627,23 +637,23 @@ private fun SpotifyLyricsPreviewCard(
 
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(alpha = 0.12f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White.copy(alpha = 0.15f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = Icons.Default.OpenInFull,
                         contentDescription = "Expand Lyrics",
                         tint = Color.White,
-                        modifier = Modifier.size(12.dp)
+                        modifier = Modifier.size(13.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(5.dp))
                     Text(
                         text = "MORE",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
-                            fontSize = 10.sp,
+                            fontSize = 11.sp,
                             letterSpacing = 1.sp
                         ),
                         color = Color.White
@@ -651,21 +661,23 @@ private fun SpotifyLyricsPreviewCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Lyrics Preview Content
             if (lyrics != null && lyrics.isSynced && lyrics.lines.isNotEmpty()) {
                 val activeIdx = currentActiveIndex.coerceIn(0, lyrics.lines.lastIndex)
                 val activeLine = lyrics.lines[activeIdx]
                 val nextLine = if (activeIdx + 1 in lyrics.lines.indices) lyrics.lines[activeIdx + 1] else null
+                val secondNextLine = if (activeIdx + 2 in lyrics.lines.indices) lyrics.lines[activeIdx + 2] else null
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
                         text = activeLine.text,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontSize = 19.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            lineHeight = 26.sp
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Black,
+                            lineHeight = 30.sp,
+                            letterSpacing = (-0.3).sp
                         ),
                         color = Color.White,
                         maxLines = 2,
@@ -674,39 +686,67 @@ private fun SpotifyLyricsPreviewCard(
                     if (nextLine != null) {
                         Text(
                             text = nextLine.text,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                lineHeight = 24.sp
+                            ),
+                            color = Color.White.copy(alpha = 0.65f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (secondNextLine != null) {
+                        Text(
+                            text = secondNextLine.text,
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontSize = 15.sp,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.Normal,
                                 lineHeight = 21.sp
                             ),
-                            color = Color.White.copy(alpha = 0.5f),
-                            maxLines = 2,
+                            color = Color.White.copy(alpha = 0.35f),
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             } else if (lyrics != null && !lyrics.plainLyrics.isNullOrBlank()) {
-                val previewLines = lyrics.plainLyrics.lines().filter { it.isNotBlank() }.take(2)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val previewLines = lyrics.plainLyrics.lines().filter { it.isNotBlank() }.take(4)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     previewLines.forEachIndexed { i, l ->
                         Text(
                             text = l,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontSize = if (i == 0) 17.sp else 14.sp,
-                                fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Medium
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = if (i == 0) 19.sp else if (i == 1) 16.sp else 14.sp,
+                                fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Medium,
+                                lineHeight = 25.sp
                             ),
-                            color = if (i == 0) Color.White else Color.White.copy(alpha = 0.5f),
+                            color = if (i == 0) Color.White else Color.White.copy(alpha = (0.7f - i * 0.18f).coerceAtLeast(0.25f)),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             } else {
-                Text(
-                    text = "Lyrics will appear here as the song plays • Tap to search or view full lyrics",
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    color = Color.White.copy(alpha = 0.6f)
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Synced lyrics will appear here as the song plays",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            lineHeight = 24.sp
+                        ),
+                        color = Color.White.copy(alpha = 0.85f)
+                    )
+                    Text(
+                        text = "Tap anywhere on this box to open full page lyrics view",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.5f)
+                    )
+                }
             }
         }
     }

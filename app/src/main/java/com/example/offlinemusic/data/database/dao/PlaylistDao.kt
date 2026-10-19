@@ -87,6 +87,9 @@ interface PlaylistDao {
     @Query("UPDATE playlists SET artwork_uri = :artworkUri WHERE id = :playlistId")
     suspend fun updatePlaylistArtwork(playlistId: String, artworkUri: String?)
 
+    @Query("UPDATE playlists SET description = :description WHERE id = :playlistId")
+    suspend fun updatePlaylistDescription(playlistId: String, description: String?)
+
     @Query("DELETE FROM playlists WHERE id = :playlistId AND playlist_type != 'LIKED'")
     suspend fun deletePlaylistById(playlistId: String)
 

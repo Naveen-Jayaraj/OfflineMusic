@@ -258,6 +258,27 @@ class MusicPlayerManager private constructor(private val context: Context) {
             _currentSong.value = updatedSong
         }
         _queue.value = _queue.value.map { if (it.id == updatedSong.id) updatedSong else it }
+        val controller = mediaController
+        if (controller != null && controller.currentMediaItem?.mediaId == updatedSong.id) {
+            val currIndex = controller.currentMediaItemIndex
+            if (currIndex in 0 until controller.mediaItemCount) {
+                controller.replaceMediaItem(currIndex, updatedSong.toMediaItem())
+            }
+        }
+    }
+
+    fun addToQueue(song: Song) {
+        val controller = mediaController
+        val currentQ = _queue.value.toMutableList()
+        currentQ.add(song)
+        songMap[song.id] = song
+        _queue.value = currentQ
+        if (controller != null) {
+            controller.addMediaItem(song.toMediaItem())
+            if (_currentSong.value == null) {
+                playSong(song, currentQ)
+            }
+        }
     }
 
     fun playSongAtIndex(index: Int) {
@@ -271,6 +292,10 @@ class MusicPlayerManager private constructor(private val context: Context) {
             _durationMs.value = song.durationMs
             _currentPositionMs.value = 0L
         }
+    }
+
+    fun pause() {
+        mediaController?.pause()
     }
 
     fun togglePlayPause() {

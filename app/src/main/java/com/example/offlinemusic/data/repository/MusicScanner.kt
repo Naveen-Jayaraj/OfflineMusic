@@ -363,7 +363,7 @@ class MusicScanner(private val context: Context) {
                 folderPlaylists[folderPlaylistId] = PlaylistEntity(
                     id = folderPlaylistId,
                     name = folderName,
-                    description = "Folder: $folderName",
+                    description = "All tracks in this folder",
                     artworkUri = track.artworkUri,
                     playlistType = "FOLDER",
                     folderSourceId = folderSourceId,
@@ -604,15 +604,35 @@ class MusicScanner(private val context: Context) {
             albumId = aid
         }
 
-        val normArtist = ArtistNormalizer.normalize(artist)
-        val artistId = ArtistNormalizer.generateArtistId(normArtist)
-        val artistEntity = ArtistEntity(
-            id = artistId,
-            name = artist.trim(),
-            normalizedName = normArtist,
-            metadataStatus = "CONFIRMED"
-        )
-        db.artistDao().insertOrUpdateArtist(artistEntity)
+        val artistParseResult = ArtistNormalizer.parseCredits(artist)
+        val trackArtistsToInsert = mutableListOf<TrackArtistEntity>()
+        val existingArtists = db.artistDao().getAllArtists()
+        val existingByNormalized = existingArtists.associateBy { it.normalizedName }.toMutableMap()
+
+        for (credit in artistParseResult.artists) {
+            val norm = credit.normalizedName
+            val existing = existingByNormalized[norm]
+            val artistId = existing?.id ?: ArtistNormalizer.generateArtistId(norm)
+            if (existing == null) {
+                val newArtist = ArtistEntity(
+                    id = artistId,
+                    name = credit.canonicalName,
+                    normalizedName = norm,
+                    metadataStatus = "CONFIRMED"
+                )
+                db.artistDao().insertOrUpdateArtist(newArtist)
+                existingByNormalized[norm] = newArtist
+            }
+            trackArtistsToInsert.add(
+                TrackArtistEntity(
+                    trackId = trackId,
+                    artistId = artistId,
+                    creditedName = credit.creditedName,
+                    artistRole = credit.role,
+                    artistOrder = credit.order
+                )
+            )
+        }
 
         val trackEntity = TrackEntity(
             id = trackId,
@@ -633,18 +653,10 @@ class MusicScanner(private val context: Context) {
 
         db.withTransaction {
             db.trackDao().insertTrack(trackEntity)
-            db.artistDao().insertTrackArtists(
-                listOf(
-                    TrackArtistEntity(
-                        trackId = trackId,
-                        artistId = artistId,
-                        creditedName = artist.trim(),
-                        artistRole = "PRIMARY",
-                        artistOrder = 0
-                    )
-                )
-            )
+            db.artistDao().insertTrackArtists(trackArtistsToInsert)
         }
+
+        repository.normalizeAndCleanArtistProfiles()
 
         repository.getSongById(trackId) ?: Song(
             id = trackId,

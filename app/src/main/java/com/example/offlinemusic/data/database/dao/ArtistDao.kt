@@ -100,4 +100,10 @@ interface ArtistDao {
 
     @Query("UPDATE artists SET aliases = CASE WHEN aliases IS NULL OR aliases = '' THEN :alias ELSE aliases || ',' || :alias END WHERE id = :artistId")
     suspend fun addAliasToArtist(artistId: String, alias: String)
+
+    @Query("DELETE FROM artists WHERE id = :artistId")
+    suspend fun deleteArtistById(artistId: String)
+
+    @Query("SELECT * FROM track_artists")
+    suspend fun getAllTrackArtists(): List<TrackArtistEntity>
 }

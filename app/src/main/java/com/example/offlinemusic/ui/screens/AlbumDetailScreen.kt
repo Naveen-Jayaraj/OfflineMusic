@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Shuffle
@@ -64,9 +65,11 @@ fun AlbumDetailScreen(
     onBackClick: () -> Unit,
     onSongClick: (Song, List<Song>) -> Unit,
     onPlayAllClick: () -> Unit,
+    onPauseClick: () -> Unit = {},
     onShuffleAllClick: () -> Unit,
     onEditAlbumName: (String) -> Unit = {},
     onAddToPlaylistClick: (Song) -> Unit = {},
+    onAddToQueueClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit = {},
     onArtistClick: (String) -> Unit = {},
     modifier: Modifier = Modifier
@@ -183,10 +186,7 @@ fun AlbumDetailScreen(
                         horizontalArrangement = Arrangement.Center,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .combinedClickable(
-                                onDoubleClick = { showEditAlbumNameDialog = true },
-                                onClick = {}
-                            )
+                            .clickable { showEditAlbumNameDialog = true }
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Icon(
@@ -203,25 +203,7 @@ fun AlbumDetailScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        IconButton(
-                            onClick = { showEditAlbumNameDialog = true },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = "Edit Album Name",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
                     }
-
-                    Text(
-                        text = "Double-tap name to rename",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    )
 
                     Spacer(modifier = Modifier.height(4.dp))
 
@@ -242,12 +224,14 @@ fun AlbumDetailScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Action Buttons: Play, Shuffle
+                    val isAlbumPlaying = isPlaying && currentSong != null && album.songs.any { it.id == currentSong.id }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Button(
-                            onClick = onPlayAllClick,
+                            onClick = if (isAlbumPlaying) onPauseClick else onPlayAllClick,
                             enabled = album.songs.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
@@ -259,12 +243,16 @@ fun AlbumDetailScreen(
                                 .height(46.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = null,
+                                imageVector = if (isAlbumPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isAlbumPlaying) "Pause" else "Play",
                                 modifier = Modifier.size(18.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(text = "PLAY", fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isAlbumPlaying) "PAUSE" else "PLAY",
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
                         }
 
                         OutlinedButton(
@@ -341,7 +329,10 @@ fun AlbumDetailScreen(
                                 if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                             )
-                            .clickable { onSongClick(song, album.songs) }
+                            .combinedClickable(
+                                onClick = { onSongClick(song, album.songs) },
+                                onLongClick = { songMenuExpanded = true }
+                            )
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -400,27 +391,20 @@ fun AlbumDetailScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        // 3-dot dropdown menu
                         Box {
-                            IconButton(
-                                onClick = { songMenuExpanded = true },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.MoreVert,
-                                    contentDescription = "Options",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-
                             DropdownMenu(
                                 expanded = songMenuExpanded,
                                 onDismissRequest = { songMenuExpanded = false },
                                 modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                             ) {
+                                DropdownMenuItem(
+                                    text = { Text("Add to Queue", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                    onClick = {
+                                        songMenuExpanded = false
+                                        onAddToQueueClick(song)
+                                    }
+                                )
                                 DropdownMenuItem(
                                     text = { Text("Edit Song Info...", color = MaterialTheme.colorScheme.onSurface) },
                                     leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },

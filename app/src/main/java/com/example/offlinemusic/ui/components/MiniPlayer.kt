@@ -49,6 +49,7 @@ fun MiniPlayer(
     onSkipNextClick: () -> Unit,
     onStopClick: () -> Unit,
     onExpandClick: () -> Unit,
+    onArtistClick: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (currentSong == null) return
@@ -109,7 +110,10 @@ fun MiniPlayer(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(enabled = onArtistClick != null) {
+                        onArtistClick?.invoke(currentSong.artist)
+                    }
                 )
             }
 

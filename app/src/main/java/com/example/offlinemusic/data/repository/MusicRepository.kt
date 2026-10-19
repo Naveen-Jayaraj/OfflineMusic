@@ -78,14 +78,15 @@ class MusicRepository(private val context: Context) {
         // 1. Clean track_artists with nonexistent tracks
         artistDao.deleteOrphanTrackArtists()
 
-        // 2. Fix track_artists where credited_name has delimiters (like "AJR/Eminem")
-        val combinedTrackArtists = artistDao.getTrackArtistsWithDelimiters()
-        for (link in combinedTrackArtists) {
+        // 2. Fix track_artists where credited_name has delimiters (like "AJR & ragav", "AJR/Eminem", "A, B", "A feat. B")
+        val allTrackArtists = artistDao.getAllTrackArtists()
+        val processedTracks = mutableSetOf<String>()
+        for (link in allTrackArtists) {
             val parts = ArtistNormalizer.splitCollaborators(link.creditedName)
                 .map { ArtistNormalizer.resolveCanonicalName(it) }
                 .filter { it.isNotBlank() }
 
-            if (parts.size > 1) {
+            if (parts.size > 1 && processedTracks.add(link.trackId)) {
                 artistDao.deleteTrackArtistsForTrack(link.trackId)
                 val newLinks = mutableListOf<TrackArtistEntity>()
                 var order = 0
@@ -104,7 +105,7 @@ class MusicRepository(private val context: Context) {
                             trackId = link.trackId,
                             artistId = artistId,
                             creditedName = part,
-                            artistRole = link.artistRole,
+                            artistRole = if (order == 0) "PRIMARY" else "FEATURED",
                             artistOrder = order++
                         )
                     )
@@ -113,41 +114,45 @@ class MusicRepository(private val context: Context) {
             }
         }
 
-        // 3. Fix any artist entities whose names contain delimiters (like "AJR/Eminem")
-        val combinedArtists = artistDao.getCombinedDelimitedArtists()
-        for (artist in combinedArtists) {
-            val trackLinks = artistDao.getTrackArtistsForArtistId(artist.id)
+        // 3. Fix any artist entities whose names contain delimiters (like "AJR & ragav", "AJR/Eminem")
+        val allArtists = artistDao.getAllArtists()
+        for (artist in allArtists) {
             val subArtists = ArtistNormalizer.splitCollaborators(artist.name)
                 .map { ArtistNormalizer.resolveCanonicalName(it) }
                 .filter { it.isNotBlank() }
 
-            if (subArtists.size > 1 && trackLinks.isNotEmpty()) {
-                val newLinks = mutableListOf<TrackArtistEntity>()
-                for (link in trackLinks) {
-                    var order = link.artistOrder
-                    for (subName in subArtists) {
-                        val subNorm = ArtistNormalizer.normalize(subName)
-                        val subId = ArtistNormalizer.generateArtistId(subNorm)
-                        val subEntity = ArtistEntity(
-                            id = subId,
-                            name = subName,
-                            normalizedName = subNorm,
-                            metadataStatus = "CONFIRMED"
-                        )
-                        artistDao.insertOrUpdateArtist(subEntity)
-                        newLinks.add(
-                            TrackArtistEntity(
-                                trackId = link.trackId,
-                                artistId = subId,
-                                creditedName = subName,
-                                artistRole = link.artistRole,
-                                artistOrder = order++
+            if (subArtists.size > 1) {
+                val trackLinks = artistDao.getTrackArtistsForArtistId(artist.id)
+                if (trackLinks.isNotEmpty()) {
+                    val newLinks = mutableListOf<TrackArtistEntity>()
+                    for (link in trackLinks) {
+                        var order = link.artistOrder
+                        for (subName in subArtists) {
+                            val subNorm = ArtistNormalizer.normalize(subName)
+                            val subId = ArtistNormalizer.generateArtistId(subNorm)
+                            val subEntity = ArtistEntity(
+                                id = subId,
+                                name = subName,
+                                normalizedName = subNorm,
+                                metadataStatus = "CONFIRMED"
                             )
-                        )
+                            artistDao.insertOrUpdateArtist(subEntity)
+                            newLinks.add(
+                                TrackArtistEntity(
+                                    trackId = link.trackId,
+                                    artistId = subId,
+                                    creditedName = subName,
+                                    artistRole = link.artistRole,
+                                    artistOrder = order++
+                                )
+                            )
+                        }
                     }
+                    artistDao.deleteTrackArtistsForArtistId(artist.id)
+                    artistDao.insertTrackArtists(newLinks)
                 }
-                artistDao.deleteTrackArtistsForArtistId(artist.id)
-                artistDao.insertTrackArtists(newLinks)
+                // Permanently delete the combined artist entity
+                artistDao.deleteArtistById(artist.id)
             }
         }
 
@@ -408,7 +413,11 @@ class MusicRepository(private val context: Context) {
     }
 
     suspend fun getArtistProfile(artistName: String): ArtistProfile = withContext(Dispatchers.IO) {
-        val canonicalName = ArtistNormalizer.resolveCanonicalName(artistName)
+        val collaborators = ArtistNormalizer.splitCollaborators(artistName)
+            .map { ArtistNormalizer.resolveCanonicalName(it) }
+            .filter { it.isNotBlank() }
+        val targetArtistName = if (collaborators.size > 1) collaborators.first() else artistName
+        val canonicalName = ArtistNormalizer.resolveCanonicalName(targetArtistName)
         val norm = ArtistNormalizer.normalize(canonicalName)
         var artistEntity = artistDao.getArtistByNormalizedName(norm)
 
@@ -527,6 +536,10 @@ class MusicRepository(private val context: Context) {
 
     suspend fun updatePlaylistName(playlistId: String, newName: String) = withContext(Dispatchers.IO) {
         playlistDao.updatePlaylistName(playlistId, newName.trim())
+    }
+
+    suspend fun updatePlaylistDescription(playlistId: String, newDescription: String?) = withContext(Dispatchers.IO) {
+        playlistDao.updatePlaylistDescription(playlistId, newDescription?.trim())
     }
 
     suspend fun updatePlaylistArtwork(playlistId: String, artworkUri: Uri?) = withContext(Dispatchers.IO) {
@@ -650,7 +663,7 @@ class MusicRepository(private val context: Context) {
                 existing = PlaylistEntity(
                     id = folderPlaylistId,
                     name = folderName,
-                    description = "Folder: $folderName",
+                    description = "All tracks in this folder",
                     artworkUri = firstArt,
                     playlistType = "FOLDER",
                     createdAt = System.currentTimeMillis()

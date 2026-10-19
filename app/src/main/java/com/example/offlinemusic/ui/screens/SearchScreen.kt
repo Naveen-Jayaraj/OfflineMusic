@@ -1,8 +1,10 @@
 package com.example.offlinemusic.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,10 +27,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material3.DropdownMenu
@@ -67,6 +71,7 @@ import com.example.offlinemusic.ui.components.ArtworkView
 import com.example.offlinemusic.ui.components.DownloadableTrackItem
 import com.example.offlinemusic.ui.components.SpotifyPlaylistPreviewCard
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SearchScreen(
     searchQuery: String,
@@ -83,6 +88,7 @@ fun SearchScreen(
     onAlbumClick: (Album) -> Unit,
     onArtistClick: (String) -> Unit,
     onSongAddToPlaylistClick: (Song) -> Unit,
+    onAddToQueueClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit,
     onSaveRecentSearch: (String) -> Unit,
     availableGenres: List<String> = emptyList(),
@@ -456,10 +462,13 @@ fun SearchScreen(
                                     else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
                                     RoundedCornerShape(10.dp)
                                 )
-                                .clickable {
-                                    onSaveRecentSearch(searchQuery)
-                                    onSongClick(song, searchResults.songs)
-                                }
+                                .combinedClickable(
+                                    onClick = {
+                                        onSaveRecentSearch(searchQuery)
+                                        onSongClick(song, searchResults.songs)
+                                    },
+                                    onLongClick = { menuExpanded = true }
+                                )
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -500,22 +509,22 @@ fun SearchScreen(
                             }
 
                             Box {
-                                IconButton(onClick = { menuExpanded = true }) {
-                                    Icon(
-                                        imageVector = Icons.Default.MoreVert,
-                                        contentDescription = "Song options",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
                                 DropdownMenu(
                                     expanded = menuExpanded,
                                     onDismissRequest = { menuExpanded = false },
                                     modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                                 ) {
                                     DropdownMenuItem(
+                                        text = { Text("Add to Queue", color = MaterialTheme.colorScheme.onSurface) },
+                                        leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onAddToQueueClick(song)
+                                        }
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text("Add to Playlist...", color = MaterialTheme.colorScheme.onSurface) },
+                                        leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                         onClick = {
                                             menuExpanded = false
                                             onSongAddToPlaylistClick(song)
@@ -523,6 +532,7 @@ fun SearchScreen(
                                     )
                                     DropdownMenuItem(
                                         text = { Text("Edit Song Info...", color = MaterialTheme.colorScheme.onSurface) },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                         onClick = {
                                             menuExpanded = false
                                             onEditSongClick(song)

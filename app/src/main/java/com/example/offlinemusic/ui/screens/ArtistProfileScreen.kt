@@ -1,8 +1,10 @@
 package com.example.offlinemusic.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,8 +26,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.outlined.Verified
 import androidx.compose.material3.Button
@@ -55,6 +59,7 @@ import com.example.offlinemusic.data.model.Song
 import com.example.offlinemusic.ui.components.ArtworkView
 import com.example.offlinemusic.ui.components.EqualizerBars
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ArtistProfileScreen(
     artistProfile: ArtistProfile,
@@ -66,6 +71,7 @@ fun ArtistProfileScreen(
     onShuffleAllClick: () -> Unit,
     onAlbumClick: (Album) -> Unit,
     onAddToPlaylistClick: (Song) -> Unit,
+    onAddToQueueClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -247,7 +253,10 @@ fun ArtistProfileScreen(
                             if (isCurrent) MaterialTheme.colorScheme.surfaceVariant
                             else MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
                         )
-                        .clickable { onSongClick(song, artistProfile.songs) }
+                        .combinedClickable(
+                            onClick = { onSongClick(song, artistProfile.songs) },
+                            onLongClick = { menuExpanded = true }
+                        )
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -290,27 +299,23 @@ fun ArtistProfileScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                     }
 
-                    // 3-dots Menu for Add to Album
                     Box {
-                        IconButton(
-                            onClick = { menuExpanded = true },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Options",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
                         DropdownMenu(
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false },
                             modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                         ) {
                             DropdownMenuItem(
+                                text = { Text("Add to Queue", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onAddToQueueClick(song)
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Edit Song Info...", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                 onClick = {
                                     menuExpanded = false
                                     onEditSongClick(song)
@@ -318,6 +323,7 @@ fun ArtistProfileScreen(
                             )
                             DropdownMenuItem(
                                 text = { Text("Add to Playlist...", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                 onClick = {
                                     menuExpanded = false
                                     onAddToPlaylistClick(song)
