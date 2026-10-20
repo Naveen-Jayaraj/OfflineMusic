@@ -1,10 +1,18 @@
 package com.example.offlinemusic.downloader.engine
 
+import com.example.offlinemusic.data.model.Song
+
 /**
  * High performance multi-tier fuzzy matching engine (matching lucida-flow fuzzy.rs)
  * Evaluates token coverage, character bigrams, and typo resilience to rank music search results.
  */
 object FuzzyMatcher {
+
+    data class DuplicateMatchResult(
+        val matchedSong: Song,
+        val score: Double,
+        val percentage: Int
+    )
 
     fun normalize(s: String): String {
         val sb = StringBuilder(s.length)
@@ -104,16 +112,57 @@ object FuzzyMatcher {
         val normQArtist = normalize(queryArtist)
         val normTArtist = normalize(targetArtist)
 
-        val titleTokenScore = tokenCoverageScore(normQTitle, normTTitle)
+        val titleTokenScore = maxOf(
+            tokenCoverageScore(normQTitle, normTTitle),
+            tokenCoverageScore(normTTitle, normQTitle)
+        )
         val titleDiceScore = diceBigramSimilarity(normQTitle, normTTitle)
         val titleScore = (titleTokenScore * 0.6) + (titleDiceScore * 0.4)
 
-        val artistTokenScore = tokenCoverageScore(normQArtist, normTArtist)
+        val artistTokenScore = maxOf(
+            tokenCoverageScore(normQArtist, normTArtist),
+            tokenCoverageScore(normTArtist, normQArtist)
+        )
         val artistDiceScore = diceBigramSimilarity(normQArtist, normTArtist)
-        val artistScore = if (normQArtist.isEmpty()) 0.5 else (artistTokenScore * 0.5) + (artistDiceScore * 0.5)
+        val artistScore = if (normQArtist.isEmpty() || normTArtist.isEmpty()) 0.5 else (artistTokenScore * 0.5) + (artistDiceScore * 0.5)
 
         // Combined weighted score: Title has 65% weight, Artist has 35% weight
         return (titleScore * 0.65) + (artistScore * 0.35)
+    }
+
+    /**
+     * Find if a track already exists in the database with 70% or higher match.
+     * Evaluates both Title (fuzzy token coverage & bigram) and Artist similarity.
+     */
+    fun findDuplicateSong(
+        queryTitle: String,
+        queryArtist: String,
+        databaseSongs: List<Song>,
+        threshold: Double = 0.70
+    ): DuplicateMatchResult? {
+        var bestSong: Song? = null
+        var bestScore = threshold
+
+        for (song in databaseSongs) {
+            val score = matchScore(
+                queryTitle = queryTitle,
+                queryArtist = queryArtist,
+                targetTitle = song.title,
+                targetArtist = song.artist
+            )
+            if (score >= bestScore) {
+                bestScore = score
+                bestSong = song
+            }
+        }
+
+        return bestSong?.let {
+            DuplicateMatchResult(
+                matchedSong = it,
+                score = bestScore,
+                percentage = (bestScore * 100).toInt().coerceIn(0, 100)
+            )
+        }
     }
 
     fun <T> findBestMatch(

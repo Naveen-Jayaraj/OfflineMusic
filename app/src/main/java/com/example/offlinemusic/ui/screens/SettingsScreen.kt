@@ -4,6 +4,7 @@ import android.content.Intent
 import android.media.audiofx.AudioEffect
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -64,11 +65,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.offlinemusic.R
 import com.example.offlinemusic.downloader.models.DownloadSourceFilter
 import com.example.offlinemusic.ui.navigation.BottomNavTab
 
@@ -87,6 +90,7 @@ fun SettingsScreen(
     downloadSourceFilter: DownloadSourceFilter = DownloadSourceFilter.BOTH,
     onDownloadSourceFilterChange: (DownloadSourceFilter) -> Unit = {},
     onNavigateToTab: (BottomNavTab) -> Unit = {},
+    onOpenDownloads: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -192,6 +196,16 @@ fun SettingsScreen(
                         icon = Icons.Default.Refresh,
                         isLoading = isLoading,
                         onClick = onRescanClick
+                    )
+
+                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    // Downloads & History Row
+                    SettingsActionRow(
+                        title = "Downloads & History",
+                        subtitle = "Track in-progress, completed, and failed music downloads",
+                        icon = Icons.Default.Download,
+                        onClick = onOpenDownloads
                     )
                 }
             }
@@ -356,8 +370,8 @@ fun SettingsScreen(
                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                     SettingsActionRow(
-                        title = "Offline Music",
-                        subtitle = "Version 1.0.0 • Tap for build architecture & credits",
+                        title = "BitTune",
+                        subtitle = "Version 1.0.0 • Retro Hi-Fi Audio Player",
                         icon = Icons.Default.Info,
                         onClick = { showAboutDialog = true }
                     )
@@ -921,17 +935,27 @@ private fun AboutAppDialog(
         title = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
+                Image(
+                    painter = painterResource(id = R.drawable.ic_bittune_logo),
+                    contentDescription = "BitTune Mascot",
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                 )
-                Text(
-                    text = "Offline Music",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                )
+                Column {
+                    Text(
+                        text = "BitTune",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Text(
+                        text = "Retro Hi-Fi Music Experience",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         },
         text = {
@@ -940,7 +964,7 @@ private fun AboutAppDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "A modern, beautiful, and fluid offline music player designed for audiophiles.",
+                    text = "A modern, beautiful, and fluid retro-styled music player with lossless streaming and full offline playback.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )

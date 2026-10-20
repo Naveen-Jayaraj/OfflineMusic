@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -71,11 +72,13 @@ fun AlbumDetailScreen(
     onAddToPlaylistClick: (Song) -> Unit = {},
     onAddToQueueClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit = {},
+    onDeleteSongClick: (Song) -> Unit = {},
     onArtistClick: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showAlbumMenu by remember { mutableStateOf(false) }
     var showEditAlbumNameDialog by remember { mutableStateOf(false) }
+    var songToDelete by remember { mutableStateOf<Song?>(null) }
 
     if (showEditAlbumNameDialog) {
         EditAlbumNameDialog(
@@ -444,6 +447,15 @@ fun AlbumDetailScreen(
                                         )
                                     }
                                 }
+
+                                DropdownMenuItem(
+                                    text = { Text("Delete Song Completely", color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = { Icon(Icons.Default.DeleteForever, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        songMenuExpanded = false
+                                        songToDelete = song
+                                    }
+                                )
                             }
                         }
                     }
@@ -453,6 +465,17 @@ fun AlbumDetailScreen(
             item {
                 Spacer(modifier = Modifier.height(90.dp))
             }
+        }
+
+        if (songToDelete != null) {
+            com.example.offlinemusic.ui.components.DeleteSongConfirmDialog(
+                song = songToDelete,
+                onConfirmDelete = {
+                    onDeleteSongClick(it)
+                    songToDelete = null
+                },
+                onDismiss = { songToDelete = null }
+            )
         }
     }
 }

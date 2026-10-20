@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Edit
@@ -89,6 +90,7 @@ fun PlaylistDetailScreen(
     onAddToAnotherPlaylistClick: (Song) -> Unit = {},
     onAddToQueueClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit = {},
+    onDeleteSongClick: (Song) -> Unit = {},
     onArtistClick: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -97,6 +99,7 @@ fun PlaylistDetailScreen(
     var showEditNameDialog by remember { mutableStateOf(false) }
     var showEditDescriptionDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var songToDelete by remember { mutableStateOf<Song?>(null) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -764,9 +767,19 @@ fun PlaylistDetailScreen(
 
                                 DropdownMenuItem(
                                     text = { Text(if (isLikedSpecial) "Unlike (Remove from Liked)" else "Remove from this Playlist", color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = { Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                                     onClick = {
                                         songMenuExpanded = false
                                         onRemoveSongClick(song)
+                                    }
+                                )
+
+                                DropdownMenuItem(
+                                    text = { Text("Delete Song Completely", color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = { Icon(Icons.Default.DeleteForever, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        songMenuExpanded = false
+                                        songToDelete = song
                                     }
                                 )
                             }
@@ -778,6 +791,17 @@ fun PlaylistDetailScreen(
             item {
                 Spacer(modifier = Modifier.height(90.dp))
             }
+        }
+
+        if (songToDelete != null) {
+            com.example.offlinemusic.ui.components.DeleteSongConfirmDialog(
+                song = songToDelete,
+                onConfirmDelete = {
+                    onDeleteSongClick(it)
+                    songToDelete = null
+                },
+                onDismiss = { songToDelete = null }
+            )
         }
     }
 }

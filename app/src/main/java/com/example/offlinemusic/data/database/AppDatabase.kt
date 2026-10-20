@@ -9,6 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.offlinemusic.data.database.dao.AlbumDao
 import com.example.offlinemusic.data.database.dao.ArtistDao
 import com.example.offlinemusic.data.database.dao.ArtistReviewQueueDao
+import com.example.offlinemusic.data.database.dao.DownloadDao
 import com.example.offlinemusic.data.database.dao.FolderSourceDao
 import com.example.offlinemusic.data.database.dao.GenreDao
 import com.example.offlinemusic.data.database.dao.LibraryDao
@@ -18,6 +19,7 @@ import com.example.offlinemusic.data.database.dao.TrackDao
 import com.example.offlinemusic.data.database.entities.AlbumEntity
 import com.example.offlinemusic.data.database.entities.ArtistEntity
 import com.example.offlinemusic.data.database.entities.ArtistReviewQueueEntity
+import com.example.offlinemusic.data.database.entities.DownloadRecordEntity
 import com.example.offlinemusic.data.database.entities.FolderSourceEntity
 import com.example.offlinemusic.data.database.entities.GenreEntity
 import com.example.offlinemusic.data.database.entities.PlayEventEntity
@@ -39,9 +41,10 @@ import com.example.offlinemusic.data.database.entities.TrackGenreEntity
         TrackGenreEntity::class,
         PlayEventEntity::class,
         FolderSourceEntity::class,
-        ArtistReviewQueueEntity::class
+        ArtistReviewQueueEntity::class,
+        DownloadRecordEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -54,6 +57,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun playEventDao(): PlayEventDao
     abstract fun folderSourceDao(): FolderSourceDao
     abstract fun artistReviewQueueDao(): ArtistReviewQueueDao
+    abstract fun downloadDao(): DownloadDao
     abstract fun libraryDao(): LibraryDao
 
     companion object {
@@ -71,7 +75,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
@@ -364,6 +368,32 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `tracks` ADD COLUMN `lyrics_uri` TEXT DEFAULT NULL")
+            }
+        }
+
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `download_records` (
+                        `id` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `artist` TEXT NOT NULL,
+                        `source` TEXT NOT NULL,
+                        `source_url` TEXT NOT NULL DEFAULT '',
+                        `thumbnail_url` TEXT,
+                        `status` TEXT NOT NULL DEFAULT 'QUEUED',
+                        `progress` REAL NOT NULL DEFAULT 0.0,
+                        `error_message` TEXT,
+                        `file_path` TEXT,
+                        `file_size_bytes` INTEGER NOT NULL DEFAULT 0,
+                        `duration_ms` INTEGER NOT NULL DEFAULT 0,
+                        `created_timestamp` INTEGER NOT NULL,
+                        `completed_timestamp` INTEGER,
+                        PRIMARY KEY(`id`)
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_download_records_created_timestamp` ON `download_records` (`created_timestamp`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_download_records_status` ON `download_records` (`status`)")
             }
         }
     }

@@ -676,6 +676,164 @@ class MusicScanner(private val context: Context) {
         )
     }
 
+    suspend fun replaceExistingTrackWithDownload(
+        existingTrackId: String,
+        newAudioFile: File,
+        newTitle: String,
+        newArtist: String,
+        newAlbum: String? = null,
+        newArtworkFile: File? = null,
+        newLrcFile: File? = null
+    ): Song = withContext(Dispatchers.IO) {
+        val existingEntity = db.trackDao().getTrackById(existingTrackId)
+        val oldFileUri = existingEntity?.fileUri
+
+        // If old physical file exists and is different from newAudioFile, clean it up
+        if (oldFileUri != null && oldFileUri.startsWith("file://")) {
+            val oldPath = Uri.parse(oldFileUri).path
+            if (oldPath != null) {
+                val oldFile = File(oldPath)
+                if (oldFile.exists() && oldFile.canonicalPath != newAudioFile.canonicalPath) {
+                    try { oldFile.delete() } catch (_: Exception) {}
+                }
+            }
+        }
+
+        var durationMs = 0L
+        val mmr = MediaMetadataRetriever()
+        try {
+            mmr.setDataSource(newAudioFile.absolutePath)
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let {
+                durationMs = it
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { mmr.release() } catch (_: Exception) {}
+        }
+
+        var artworkUri: Uri? = null
+        if (newArtworkFile != null && newArtworkFile.exists()) {
+            artworkUri = getArtworkUri(newArtworkFile)
+        }
+
+        val finalLrcUri = if (newLrcFile != null && newLrcFile.exists()) {
+            Uri.fromFile(newLrcFile).toString()
+        } else {
+            val siblingLrc = File(newAudioFile.parentFile, "${newAudioFile.nameWithoutExtension}.lrc")
+            if (siblingLrc.exists()) Uri.fromFile(siblingLrc).toString() else existingEntity?.lyricsUri
+        }
+
+        val finalFormat = newAudioFile.extension.lowercase().ifBlank { "mp3" }
+        val finalSizeBytes = newAudioFile.length()
+        val finalDateModified = newAudioFile.lastModified()
+        val finalFileUri = Uri.fromFile(newAudioFile).toString()
+
+        var albumId = existingEntity?.albumId
+        if (!newAlbum.isNullOrBlank() && !newAlbum.equals("Unknown Album", ignoreCase = true)) {
+            val normalizedAlbum = newAlbum.trim().lowercase()
+            val aid = "album_${normalizedAlbum.hashCode().toUInt().toString(16)}"
+            val albumEntity = AlbumEntity(
+                id = aid,
+                title = newAlbum.trim(),
+                normalizedTitle = normalizedAlbum,
+                albumArtist = newArtist,
+                artworkUri = artworkUri?.toString() ?: existingEntity?.artworkUri
+            )
+            db.albumDao().insertOrUpdateAlbum(albumEntity)
+            albumId = aid
+        }
+
+        val updatedEntity = (existingEntity ?: TrackEntity(
+            id = existingTrackId,
+            title = newTitle,
+            normalizedTitle = newTitle.lowercase().trim(),
+            durationMs = durationMs,
+            fileUri = finalFileUri,
+            format = finalFormat,
+            sizeBytes = finalSizeBytes,
+            metadataStatus = "PARSED",
+            dateAdded = System.currentTimeMillis(),
+            dateModified = finalDateModified,
+            relativePath = newAudioFile.name
+        )).copy(
+            title = newTitle.ifBlank { existingEntity?.title ?: newAudioFile.nameWithoutExtension },
+            normalizedTitle = (newTitle.ifBlank { existingEntity?.title ?: newAudioFile.nameWithoutExtension }).lowercase().trim(),
+            durationMs = if (durationMs > 0) durationMs else (existingEntity?.durationMs ?: 0L),
+            fileUri = finalFileUri,
+            format = finalFormat,
+            sizeBytes = finalSizeBytes,
+            dateModified = finalDateModified,
+            relativePath = newAudioFile.name,
+            albumId = albumId,
+            artworkUri = artworkUri?.toString() ?: existingEntity?.artworkUri,
+            lyricsUri = finalLrcUri
+        )
+
+        val artistParseResult = ArtistNormalizer.parseCredits(newArtist)
+        val trackArtistsToInsert = mutableListOf<TrackArtistEntity>()
+        val existingArtists = db.artistDao().getAllArtists()
+        val existingByNormalized = existingArtists.associateBy { it.normalizedName }.toMutableMap()
+
+        for (credit in artistParseResult.artists) {
+            val norm = credit.normalizedName
+            val existing = existingByNormalized[norm]
+            val artistId = existing?.id ?: ArtistNormalizer.generateArtistId(norm)
+            if (existing == null) {
+                val newArtistEntity = ArtistEntity(
+                    id = artistId,
+                    name = credit.canonicalName,
+                    normalizedName = norm,
+                    metadataStatus = "CONFIRMED"
+                )
+                db.artistDao().insertOrUpdateArtist(newArtistEntity)
+                existingByNormalized[norm] = newArtistEntity
+            }
+            trackArtistsToInsert.add(
+                TrackArtistEntity(
+                    trackId = existingTrackId,
+                    artistId = artistId,
+                    creditedName = credit.creditedName,
+                    artistRole = credit.role,
+                    artistOrder = credit.order
+                )
+            )
+        }
+
+        db.withTransaction {
+            db.trackDao().insertTrack(updatedEntity)
+            db.artistDao().deleteTrackArtistsForTrack(existingTrackId)
+            db.artistDao().insertTrackArtists(trackArtistsToInsert)
+        }
+
+        repository.normalizeAndCleanArtistProfiles()
+
+        try {
+            android.media.MediaScannerConnection.scanFile(
+                context,
+                arrayOf(newAudioFile.absolutePath),
+                arrayOf("audio/*"),
+                null
+            )
+        } catch (_: Exception) {}
+
+        repository.getSongById(existingTrackId) ?: Song(
+            id = existingTrackId,
+            title = updatedEntity.title,
+            artist = newArtist,
+            album = newAlbum ?: "Unknown Album",
+            albumFolder = newAlbum ?: "Downloads",
+            year = updatedEntity.year,
+            genre = null,
+            durationMs = updatedEntity.durationMs,
+            sizeBytes = updatedEntity.sizeBytes,
+            dateModified = updatedEntity.dateModified,
+            uri = Uri.fromFile(newAudioFile),
+            relativePath = newAudioFile.name,
+            artworkUri = artworkUri,
+            lyricsUri = finalLrcUri
+        )
+    }
+
     suspend fun clearCache() = withContext(Dispatchers.IO) {
         db.trackDao().deleteAllTracks()
     }

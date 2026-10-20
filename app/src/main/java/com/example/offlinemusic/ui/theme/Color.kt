@@ -2,28 +2,36 @@ package com.example.offlinemusic.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Pure Monochrome - Dark Mode
-val DarkBackground = Color(0xFF000000)
-val DarkSurface = Color(0xFF0D0D10)
-val DarkSurfaceCard = Color(0xFF16161A)
-val DarkSurfaceCardSelected = Color(0xFF222228)
-val DarkTextPrimary = Color(0xFFFFFFFF)
-val DarkTextSecondary = Color(0xFFA2A2AA)
-val DarkTextMuted = Color(0xFF6B6B75)
-val DarkBorder = Color(0xFF26262E)
-val DarkDivider = Color(0xFF1B1B20)
-val DarkAccent = Color(0xFFFFFFFF)
-val DarkAccentMuted = Color(0xFF404048)
+// BitTune Cyber-Retro Theme Palette (Derived from BitTune Mascot Logo)
+val BitTuneMint = Color(0xFF22C55E) // Iconic pixel LCD mint green
+val BitTuneMintGlow = Color(0xFF4ADE80)
+val BitTuneGold = Color(0xFFFBBF24) // Retro star sparkle
+val BitTuneHoloPink = Color(0xFFF472B6) // Iridescent CD pink
+val BitTuneHoloBlue = Color(0xFF38BDF8) // Iridescent CD cyan
+val BitTuneCream = Color(0xFFF7F5F0) // Walkman matte chassis
 
-// Pure Monochrome - Light Mode
-val LightBackground = Color(0xFFFFFFFF)
-val LightSurface = Color(0xFFF8F9FA)
-val LightSurfaceCard = Color(0xFFF1F3F5)
-val LightSurfaceCardSelected = Color(0xFFE5E7EB)
-val LightTextPrimary = Color(0xFF0A0A0C)
-val LightTextSecondary = Color(0xFF555560)
-val LightTextMuted = Color(0xFF8E8E98)
-val LightBorder = Color(0xFFE2E4E9)
-val LightDivider = Color(0xFFEEEEF2)
-val LightAccent = Color(0xFF0A0A0C)
-val LightAccentMuted = Color(0xFFD4D6DC)
+// Dark Mode - Deep Space Cyber
+val DarkBackground = Color(0xFF0D0F14)
+val DarkSurface = Color(0xFF131720)
+val DarkSurfaceCard = Color(0xFF1A1F2B)
+val DarkSurfaceCardSelected = Color(0xFF252C3D)
+val DarkTextPrimary = Color(0xFFF8FAFC)
+val DarkTextSecondary = Color(0xFF94A3B8)
+val DarkTextMuted = Color(0xFF64748B)
+val DarkBorder = Color(0xFF283144)
+val DarkDivider = Color(0xFF1D2433)
+val DarkAccent = BitTuneMint
+val DarkAccentMuted = Color(0xFF15803D)
+
+// Light Mode - Retro Cream Walkman
+val LightBackground = Color(0xFFF6F4EE)
+val LightSurface = Color(0xFFFFFFFF)
+val LightSurfaceCard = Color(0xFFECE7DE)
+val LightSurfaceCardSelected = Color(0xFFDED8CC)
+val LightTextPrimary = Color(0xFF0F172A)
+val LightTextSecondary = Color(0xFF475569)
+val LightTextMuted = Color(0xFF94A3B8)
+val LightBorder = Color(0xFFD5CEBF)
+val LightDivider = Color(0xFFE4DFD3)
+val LightAccent = Color(0xFF16A34A)
+val LightAccentMuted = Color(0xFFBBF7D0)

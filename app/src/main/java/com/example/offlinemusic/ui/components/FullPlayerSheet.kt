@@ -1,5 +1,8 @@
 package com.example.offlinemusic.ui.components
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,7 +28,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -37,13 +42,23 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -99,6 +114,14 @@ fun FullPlayerSheet(
     onArtistClick: ((String) -> Unit)? = null,
     lyrics: com.example.offlinemusic.downloader.models.SyncedLyrics? = null,
     currentLyricsIndex: Int = -1,
+    sleepTimerRemainingMs: Long? = null,
+    sleepTimerSelectedMinutes: Int? = null,
+    onSetSleepTimerMinutes: (Int) -> Unit = {},
+    onSetSleepTimerEndOfTrack: () -> Unit = {},
+    onCancelSleepTimer: () -> Unit = {},
+    onDeleteSongClick: (Song) -> Unit = {},
+    onAttachLyrics: (Song, Uri) -> Unit = { _, _ -> },
+    onRemoveLyrics: (Song) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
@@ -106,6 +129,9 @@ fun FullPlayerSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var isQueueVisible by remember { mutableStateOf(false) }
     var isLyricsVisible by remember { mutableStateOf(false) }
+    var showSleepTimerSheet by remember { mutableStateOf(false) }
+    var showPlayerMenu by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
     var isUserSeeking by remember { mutableStateOf(false) }
     var seekProgress by remember { mutableFloatStateOf(0f) }
@@ -161,6 +187,31 @@ fun FullPlayerSheet(
                 )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Sleep Timer button in top corner
+                    IconButton(onClick = { showSleepTimerSheet = true }) {
+                        BadgedBox(
+                            badge = {
+                                if (sleepTimerRemainingMs != null && sleepTimerRemainingMs > 0) {
+                                    val totalSec = sleepTimerRemainingMs / 1000
+                                    val mins = totalSec / 60
+                                    Badge(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    ) {
+                                        Text(if (mins > 0) "${mins}m" else "${totalSec}s", fontSize = 9.sp)
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Bedtime,
+                                contentDescription = "Sleep Timer",
+                                tint = if (sleepTimerRemainingMs != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+
                     IconButton(onClick = onEditMetadataClick) {
                         Icon(
                             imageVector = Icons.Default.Edit,
@@ -168,6 +219,40 @@ fun FullPlayerSheet(
                             tint = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.size(22.dp)
                         )
+                    }
+
+                    Box {
+                        IconButton(onClick = { showPlayerMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "More Options",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showPlayerMenu,
+                            onDismissRequest = { showPlayerMenu = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Add to Playlist...", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                onClick = {
+                                    showPlayerMenu = false
+                                    onAddToPlaylistClick()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete Song Completely", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Default.DeleteForever, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    showPlayerMenu = false
+                                    showDeleteConfirmDialog = true
+                                }
+                            )
+                        }
                     }
 
                     IconButton(onClick = {
@@ -203,6 +288,8 @@ fun FullPlayerSheet(
                     onPlayPauseClick = onPlayPauseClick,
                     onSeekTo = onSeekTo,
                     onClose = { isLyricsVisible = false },
+                    onAttachLyrics = onAttachLyrics,
+                    onRemoveLyrics = onRemoveLyrics,
                     modifier = Modifier.weight(1f)
                 )
             } else {
@@ -491,6 +578,28 @@ fun FullPlayerSheet(
             }
         }
     }
+
+    if (showSleepTimerSheet) {
+        SleepTimerBottomSheet(
+            remainingMs = sleepTimerRemainingMs,
+            selectedMinutes = sleepTimerSelectedMinutes,
+            onSetTimerMinutes = onSetSleepTimerMinutes,
+            onSetEndOfTrackTimer = onSetSleepTimerEndOfTrack,
+            onCancelTimer = onCancelSleepTimer,
+            onDismiss = { showSleepTimerSheet = false }
+        )
+    }
+
+    if (showDeleteConfirmDialog) {
+        DeleteSongConfirmDialog(
+            song = song,
+            onConfirmDelete = {
+                onDeleteSongClick(it)
+                onDismiss()
+            },
+            onDismiss = { showDeleteConfirmDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -761,8 +870,46 @@ private fun FullPageLyricsView(
     onPlayPauseClick: () -> Unit,
     onSeekTo: (Long) -> Unit,
     onClose: () -> Unit,
+    onAttachLyrics: (Song, Uri) -> Unit,
+    onRemoveLyrics: (Song) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val lrcPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onAttachLyrics(song, uri)
+        }
+    }
+
+    var showRemoveConfirmDialog by remember { mutableStateOf(false) }
+    var showLyricsMenu by remember { mutableStateOf(false) }
+
+    val hasLyrics = lyrics != null && (lyrics.isSynced || !lyrics.plainLyrics.isNullOrBlank())
+
+    if (showRemoveConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showRemoveConfirmDialog = false },
+            title = { Text("Remove Lyrics") },
+            text = { Text("Are you sure you want to remove the lyrics file for \"${song.title}\"? The saved .lrc file will be deleted.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRemoveLyrics(song)
+                        showRemoveConfirmDialog = false
+                    }
+                ) {
+                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRemoveConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -805,13 +952,61 @@ private fun FullPageLyricsView(
                 )
             }
 
-            IconButton(onClick = onClose) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Close Lyrics",
-                    tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.size(24.dp)
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (hasLyrics) {
+                    Box {
+                        IconButton(onClick = { showLyricsMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "Lyrics Options",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showLyricsMenu,
+                            onDismissRequest = { showLyricsMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Replace .lrc File") },
+                                onClick = {
+                                    showLyricsMenu = false
+                                    lrcPickerLauncher.launch("*/*")
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Add, contentDescription = null)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Remove Lyrics", color = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    showLyricsMenu = false
+                                    showRemoveConfirmDialog = true
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    IconButton(onClick = { lrcPickerLauncher.launch("*/*") }) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add .lrc File",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
+
+                IconButton(onClick = onClose) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close Lyrics",
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
 
@@ -821,7 +1016,7 @@ private fun FullPageLyricsView(
                 .weight(1f)
                 .fillMaxWidth()
         ) {
-            if (lyrics != null && (lyrics.isSynced || !lyrics.plainLyrics.isNullOrBlank())) {
+            if (hasLyrics && lyrics != null) {
                 SyncedLyricsView(
                     lyrics = lyrics,
                     currentActiveIndex = currentActiveIndex,
@@ -829,12 +1024,62 @@ private fun FullPageLyricsView(
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "Searching or loading lyrics...",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(68.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MusicNote,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
+                        Text(
+                            text = "No lyrics found",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = "Add a synchronized .lrc file from your device to follow along with the music.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Button(
+                            onClick = { lrcPickerLauncher.launch("*/*") },
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Add .lrc File",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                    }
                 }
             }
 

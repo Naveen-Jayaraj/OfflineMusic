@@ -800,4 +800,124 @@ class MusicRepository(private val context: Context) {
             songs = emptyList()
         )
     }
+
+    suspend fun deleteSongPermanently(songId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val track = trackDao.getTrackById(songId) ?: return@withContext false
+
+            // 1. Delete physical audio file
+            val fileUri = track.fileUri
+            var audioFilePath: String? = null
+            try {
+                val uri = Uri.parse(fileUri)
+                if (uri.scheme == "file" || uri.scheme == null) {
+                    val audioFile = File(uri.path ?: fileUri)
+                    audioFilePath = audioFile.absolutePath
+                    if (audioFile.exists()) {
+                        audioFile.delete()
+                    }
+                } else if (uri.scheme == "content") {
+                    context.contentResolver.delete(uri, null, null)
+                }
+            } catch (_: Exception) {}
+
+            // 2. Delete lyrics (.lrc) file completely
+            val lyricsUri = track.lyricsUri
+            if (!lyricsUri.isNullOrBlank()) {
+                try {
+                    val lUri = Uri.parse(lyricsUri)
+                    if (lUri.scheme == "file" || lUri.scheme == null) {
+                        val lrcFile = File(lUri.path ?: lyricsUri)
+                        if (lrcFile.exists()) {
+                            lrcFile.delete()
+                        }
+                    } else if (lUri.scheme == "content") {
+                        context.contentResolver.delete(lUri, null, null)
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // Also check and delete sibling .lrc file next to audio file
+            if (audioFilePath != null) {
+                try {
+                    val audioFile = File(audioFilePath)
+                    val siblingLrc = File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc")
+                    if (siblingLrc.exists()) {
+                        siblingLrc.delete()
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // 3. Delete database entry (cascades to playlist_tracks, track_artists, track_genres, play_events)
+            trackDao.deleteTrackById(songId)
+
+            // 4. Update Android MediaStore
+            if (audioFilePath != null) {
+                try {
+                    android.media.MediaScannerConnection.scanFile(
+                        context,
+                        arrayOf(audioFilePath),
+                        null,
+                        null
+                    )
+                } catch (_: Exception) {}
+            }
+
+            // 5. Clean up any empty/orphan artist entries
+            try {
+                normalizeAndCleanArtistProfiles()
+            } catch (_: Exception) {}
+
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    suspend fun saveLyricsForTrack(trackId: String, lyricsContent: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val track = trackDao.getTrackById(trackId) ?: return@withContext false
+            val audioUri = Uri.parse(track.fileUri)
+            val audioPath = audioUri.path ?: track.fileUri
+            val audioFile = File(audioPath)
+
+            val lrcFile = if (audioFile.parentFile?.exists() == true && audioFile.parentFile?.canWrite() == true) {
+                File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc")
+            } else {
+                val lyricsDir = File(context.filesDir, "lyrics").apply { mkdirs() }
+                File(lyricsDir, "${trackId}.lrc")
+            }
+
+            lrcFile.writeText(lyricsContent)
+            trackDao.updateLyricsUri(trackId, Uri.fromFile(lrcFile).toString())
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    suspend fun removeLyricsForTrack(trackId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val track = trackDao.getTrackById(trackId) ?: return@withContext false
+            val lrcUri = track.lyricsUri
+            if (!lrcUri.isNullOrBlank()) {
+                try {
+                    val f = File(Uri.parse(lrcUri).path ?: lrcUri)
+                    if (f.exists()) f.delete()
+                } catch (_: Exception) {}
+            }
+            // Sibling .lrc check
+            try {
+                val audioFile = File(Uri.parse(track.fileUri).path ?: track.fileUri)
+                val siblingLrc = File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc")
+                if (siblingLrc.exists()) siblingLrc.delete()
+            } catch (_: Exception) {}
+
+            trackDao.updateLyricsUri(trackId, null)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
 }
+

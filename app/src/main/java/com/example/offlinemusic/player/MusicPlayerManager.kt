@@ -56,6 +56,15 @@ class MusicPlayerManager private constructor(private val context: Context) {
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
+    private val _sleepTimerRemainingMs = MutableStateFlow<Long?>(null)
+    val sleepTimerRemainingMs: StateFlow<Long?> = _sleepTimerRemainingMs.asStateFlow()
+
+    private val _sleepTimerSelectedMinutes = MutableStateFlow<Int?>(null)
+    val sleepTimerSelectedMinutes: StateFlow<Int?> = _sleepTimerSelectedMinutes.asStateFlow()
+
+    private var sleepTimerJob: Job? = null
+    private var isEndOfTrackTimer: Boolean = false
+
     private val songMap = mutableMapOf<String, Song>()
 
     companion object {
@@ -171,6 +180,13 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             commitCurrentPlayEvent()
+
+            if (isEndOfTrackTimer && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                pause()
+                cancelSleepTimer()
+                return
+            }
+
             activeTrackId = mediaItem?.mediaId
             if (_isPlaying.value) {
                 trackPlayStartTimeMs = System.currentTimeMillis()
@@ -195,6 +211,9 @@ class MusicPlayerManager private constructor(private val context: Context) {
                 commitCurrentPlayEvent()
                 _isPlaying.value = false
                 _currentPositionMs.value = 0L
+                if (isEndOfTrackTimer) {
+                    cancelSleepTimer()
+                }
             }
         }
 
@@ -294,10 +313,6 @@ class MusicPlayerManager private constructor(private val context: Context) {
         }
     }
 
-    fun pause() {
-        mediaController?.pause()
-    }
-
     fun togglePlayPause() {
         val controller = mediaController ?: return
         if (controller.isPlaying) {
@@ -354,7 +369,89 @@ class MusicPlayerManager private constructor(private val context: Context) {
         _repeatMode.value = nextMode
     }
 
+    fun pause() {
+        mediaController?.pause()
+        _isPlaying.value = false
+    }
+
+    fun startSleepTimer(minutes: Int) {
+        cancelSleepTimer()
+        if (minutes <= 0) return
+
+        _sleepTimerSelectedMinutes.value = minutes
+        val totalMs = minutes * 60 * 1000L
+        val targetEndTime = System.currentTimeMillis() + totalMs
+        _sleepTimerRemainingMs.value = totalMs
+
+        sleepTimerJob = scope.launch {
+            while (isActive) {
+                delay(1000L)
+                val remaining = targetEndTime - System.currentTimeMillis()
+                if (remaining <= 0) {
+                    _sleepTimerRemainingMs.value = 0L
+                    pause()
+                    cancelSleepTimer()
+                    break
+                } else {
+                    _sleepTimerRemainingMs.value = remaining
+                }
+            }
+        }
+    }
+
+    fun startSleepTimerEndOfTrack() {
+        cancelSleepTimer()
+        isEndOfTrackTimer = true
+        _sleepTimerSelectedMinutes.value = -1 // -1 signifies end of track
+
+        val currentSongDuration = _durationMs.value
+        val currentPos = _currentPositionMs.value
+        val initialRemaining = (currentSongDuration - currentPos).coerceAtLeast(0L)
+        _sleepTimerRemainingMs.value = initialRemaining
+
+        sleepTimerJob = scope.launch {
+            while (isActive) {
+                delay(500L)
+                val dur = _durationMs.value
+                val pos = _currentPositionMs.value
+                val rem = (dur - pos).coerceAtLeast(0L)
+                _sleepTimerRemainingMs.value = rem
+            }
+        }
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        isEndOfTrackTimer = false
+        _sleepTimerRemainingMs.value = null
+        _sleepTimerSelectedMinutes.value = null
+    }
+
+    fun removeTrackFromPlayer(trackId: String) {
+        val currentQ = _queue.value.toMutableList()
+        val index = currentQ.indexOfFirst { it.id == trackId }
+        if (index != -1) {
+            val wasPlayingDeletedSong = _currentSong.value?.id == trackId
+            currentQ.removeAt(index)
+            songMap.remove(trackId)
+            _queue.value = currentQ
+            val controller = mediaController
+            if (controller != null && index < controller.mediaItemCount) {
+                try {
+                    controller.removeMediaItem(index)
+                } catch (_: Exception) {}
+            }
+            if (currentQ.isEmpty()) {
+                stopPlayback()
+            } else if (wasPlayingDeletedSong) {
+                skipToNext()
+            }
+        }
+    }
+
     fun stopPlayback() {
+        cancelSleepTimer()
         val controller = mediaController ?: return
         controller.stop()
         controller.clearMediaItems()

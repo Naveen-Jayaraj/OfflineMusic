@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,7 +45,8 @@ fun SongListItem(
     isCurrentSong: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onEditClick: (() -> Unit)? = null
+    onEditClick: (() -> Unit)? = null,
+    onDeleteClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = modifier
@@ -150,6 +152,21 @@ fun SongListItem(
                     contentDescription = "Edit Song Info",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     modifier = Modifier.size(15.dp)
+                )
+            }
+        }
+
+        if (onDeleteClick != null) {
+            Spacer(modifier = Modifier.width(2.dp))
+            IconButton(
+                onClick = onDeleteClick,
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete Song",
+                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }

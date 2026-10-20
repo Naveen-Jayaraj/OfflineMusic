@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
@@ -73,8 +74,10 @@ fun ArtistProfileScreen(
     onAddToPlaylistClick: (Song) -> Unit,
     onAddToQueueClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit = {},
+    onDeleteSongClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    var songToDelete by remember { mutableStateOf<Song?>(null) }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -329,6 +332,14 @@ fun ArtistProfileScreen(
                                     onAddToPlaylistClick(song)
                                 }
                             )
+                            DropdownMenuItem(
+                                text = { Text("Delete Song Completely", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Default.DeleteForever, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    menuExpanded = false
+                                    songToDelete = song
+                                }
+                            )
                         }
                     }
                 }
@@ -398,6 +409,17 @@ fun ArtistProfileScreen(
                     }
                 }
             }
+        }
+
+        if (songToDelete != null) {
+            com.example.offlinemusic.ui.components.DeleteSongConfirmDialog(
+                song = songToDelete,
+                onConfirmDelete = {
+                    onDeleteSongClick(it)
+                    songToDelete = null
+                },
+                onDismiss = { songToDelete = null }
+            )
         }
     }
 }

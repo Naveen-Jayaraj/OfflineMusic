@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
@@ -110,6 +111,25 @@ fun CircularDownloadButton(
                     contentDescription = "Downloaded",
                     tint = spotifyGreen,
                     modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+        DownloadStatus.DUPLICATE_FOUND -> {
+            val duplicateColor = Color(0xFFFFB300)
+            Box(
+                modifier = modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(duplicateColor.copy(alpha = 0.18f))
+                    .border(1.5.dp, duplicateColor, CircleShape)
+                    .clickable { onClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ContentCopy,
+                    contentDescription = "Duplicate found - Tap to review",
+                    tint = duplicateColor,
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
@@ -248,6 +268,22 @@ fun DownloadableTrackItem(
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+
+                if (downloadProgress?.status == DownloadStatus.DUPLICATE_FOUND) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFFFFB300).copy(alpha = 0.2f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "Duplicate • Review",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                            color = Color(0xFFFFB300)
+                        )
+                    }
                 }
             }
         }

@@ -24,7 +24,9 @@ import com.example.offlinemusic.ui.components.ArtistChooserDialog
 import com.example.offlinemusic.ui.components.ArtistConfirmationDialog
 import com.example.offlinemusic.ui.components.BottomNavBar
 import com.example.offlinemusic.ui.components.CreatePlaylistDialog
+import com.example.offlinemusic.ui.components.DuplicateSongDialog
 import com.example.offlinemusic.ui.components.FolderPickerPrompt
+import com.example.offlinemusic.downloader.models.DuplicateResolution
 import com.example.offlinemusic.ui.components.FullPlayerSheet
 import com.example.offlinemusic.ui.components.MetadataEditorDialog
 import com.example.offlinemusic.ui.components.MiniPlayer
@@ -55,6 +57,8 @@ fun MainMusicScreen(
     val selectedPlaylistDetail by viewModel.selectedPlaylistDetail.collectAsState()
     val selectedAlbumDetail by viewModel.selectedAlbumDetail.collectAsState()
     val selectedArtistProfile by viewModel.selectedArtistProfile.collectAsState()
+    val detailStack by viewModel.detailStack.collectAsState()
+    val currentPlayingPlaylistId by viewModel.currentPlayingPlaylistId.collectAsState()
 
     val isFullPlayerVisible by viewModel.isFullPlayerVisible.collectAsState()
     val isSortSheetVisible by viewModel.isSortSheetVisible.collectAsState()
@@ -65,6 +69,7 @@ fun MainMusicScreen(
     val songForEditMetadata by viewModel.songForEditMetadata.collectAsState()
 
     val downloads by viewModel.downloads.collectAsState()
+    val duplicatePrompt by viewModel.duplicatePrompt.collectAsState()
     val onlineSearchResults by viewModel.onlineSearchResults.collectAsState()
     val isOnlineSearching by viewModel.isOnlineSearching.collectAsState()
     val detectedSpotifyPlaylist by viewModel.detectedSpotifyPlaylist.collectAsState()
@@ -73,6 +78,8 @@ fun MainMusicScreen(
     val currentLyrics by viewModel.currentLyrics.collectAsState()
     val currentLyricsIndex by viewModel.currentLyricsIndex.collectAsState()
     val artistChooserList by viewModel.artistChooserList.collectAsState()
+    val sleepTimerRemainingMs by viewModel.sleepTimerRemainingMs.collectAsState()
+    val sleepTimerSelectedMinutes by viewModel.sleepTimerSelectedMinutes.collectAsState()
 
     // Dialog states for customizable playlists
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
@@ -93,23 +100,15 @@ fun MainMusicScreen(
         viewModel.hideFullPlayer()
     }
 
-    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail != null) {
-        viewModel.closePlaylistDetail()
+    BackHandler(enabled = !isFullPlayerVisible && detailStack.isNotEmpty()) {
+        viewModel.popDetailStack()
     }
 
-    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail == null && selectedAlbumDetail != null) {
-        viewModel.closeAlbumDetail()
-    }
-
-    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail == null && selectedAlbumDetail == null && selectedArtistProfile != null) {
-        viewModel.closeArtistProfile()
-    }
-
-    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail == null && selectedAlbumDetail == null && selectedArtistProfile == null && searchQuery.isNotBlank()) {
+    BackHandler(enabled = !isFullPlayerVisible && detailStack.isEmpty() && searchQuery.isNotBlank()) {
         viewModel.setSearchQuery("")
     }
 
-    BackHandler(enabled = !isFullPlayerVisible && selectedPlaylistDetail == null && selectedAlbumDetail == null && selectedArtistProfile == null && searchQuery.isBlank() && currentTab != BottomNavTab.HOME) {
+    BackHandler(enabled = !isFullPlayerVisible && detailStack.isEmpty() && searchQuery.isBlank() && currentTab != BottomNavTab.HOME) {
         viewModel.selectTab(BottomNavTab.HOME)
     }
 
@@ -123,69 +122,93 @@ fun MainMusicScreen(
         } else {
             // Main Content Area
             Box(modifier = Modifier.fillMaxSize()) {
-                when {
+                when (detailStack.lastOrNull()) {
                     // 1. Playlist Detail Screen
-                    selectedPlaylistDetail != null -> {
-                        PlaylistDetailScreen(
-                            playlist = selectedPlaylistDetail!!,
-                            currentSong = currentSong,
-                            isPlaying = isPlaying,
-                            onBackClick = { viewModel.closePlaylistDetail() },
-                            onSongClick = { song, songs -> viewModel.playSong(song, songs) },
-                            onPlayAllClick = { viewModel.playPlaylist(selectedPlaylistDetail!!) },
-                            onPauseClick = { viewModel.pausePlayback() },
-                            onShuffleAllClick = { viewModel.shufflePlaylist(selectedPlaylistDetail!!) },
-                            onAddSongsClick = { showAddSongsToPlaylist = selectedPlaylistDetail },
-                            onRemoveSongClick = { song -> viewModel.removeSongFromPlaylist(selectedPlaylistDetail!!.id, song.id) },
-                            onDeletePlaylistClick = { viewModel.deletePlaylist(selectedPlaylistDetail!!.id) },
-                            onRenamePlaylistClick = { newName -> viewModel.updatePlaylistName(selectedPlaylistDetail!!.id, newName) },
-                            onEditDescriptionClick = { newDesc -> viewModel.updatePlaylistDescription(selectedPlaylistDetail!!.id, newDesc) },
-                            onChangeCoverClick = { newArtUri -> viewModel.updatePlaylistArtwork(selectedPlaylistDetail!!.id, newArtUri) },
-                            onAddToAnotherPlaylistClick = { song -> songForAddToPlaylist = song },
-                            onAddToQueueClick = { song -> viewModel.addToQueue(song) },
-                            onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
-                            onArtistClick = { viewModel.openArtistProfile(it) }
-                        )
+                    com.example.offlinemusic.ui.DetailScreenType.PLAYLIST -> {
+                        selectedPlaylistDetail?.let { playlist ->
+                            PlaylistDetailScreen(
+                                playlist = playlist,
+                                currentSong = currentSong,
+                                isPlaying = isPlaying,
+                                onBackClick = { viewModel.popDetailStack() },
+                                onSongClick = { song, songs -> viewModel.playSong(song, songs) },
+                                onPlayAllClick = { viewModel.playPlaylist(playlist) },
+                                onPauseClick = { viewModel.pausePlayback() },
+                                onShuffleAllClick = { viewModel.shufflePlaylist(playlist) },
+                                onAddSongsClick = { showAddSongsToPlaylist = playlist },
+                                onRemoveSongClick = { song -> viewModel.removeSongFromPlaylist(playlist.id, song.id) },
+                                onDeletePlaylistClick = { viewModel.deletePlaylist(playlist.id) },
+                                onRenamePlaylistClick = { newName -> viewModel.updatePlaylistName(playlist.id, newName) },
+                                onEditDescriptionClick = { newDesc -> viewModel.updatePlaylistDescription(playlist.id, newDesc) },
+                                onChangeCoverClick = { newArtUri -> viewModel.updatePlaylistArtwork(playlist.id, newArtUri) },
+                                onAddToAnotherPlaylistClick = { song -> songForAddToPlaylist = song },
+                                onAddToQueueClick = { song -> viewModel.addToQueue(song) },
+                                onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
+                                onDeleteSongClick = { song -> viewModel.deleteSong(song) },
+                                onArtistClick = { viewModel.openArtistProfile(it) }
+                            )
+                        }
                     }
 
                     // 2. Album Detail Screen
-                    selectedAlbumDetail != null -> {
-                        AlbumDetailScreen(
-                            album = selectedAlbumDetail!!,
-                            currentSong = currentSong,
-                            isPlaying = isPlaying,
-                            onBackClick = { viewModel.closeAlbumDetail() },
-                            onSongClick = { song, albumSongs -> viewModel.playSong(song, albumSongs) },
-                            onPlayAllClick = { viewModel.playAlbum(selectedAlbumDetail!!) },
-                            onPauseClick = { viewModel.pausePlayback() },
-                            onShuffleAllClick = { viewModel.shuffleAlbum(selectedAlbumDetail!!) },
-                            onEditAlbumName = { newName -> viewModel.updateAlbumName(selectedAlbumDetail!!.id, newName) },
-                            onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
-                            onAddToQueueClick = { song -> viewModel.addToQueue(song) },
-                            onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
-                            onArtistClick = { viewModel.openArtistProfile(it) }
-                        )
+                    com.example.offlinemusic.ui.DetailScreenType.ALBUM -> {
+                        selectedAlbumDetail?.let { album ->
+                            AlbumDetailScreen(
+                                album = album,
+                                currentSong = currentSong,
+                                isPlaying = isPlaying,
+                                onBackClick = { viewModel.popDetailStack() },
+                                onSongClick = { song, albumSongs -> viewModel.playSong(song, albumSongs) },
+                                onPlayAllClick = { viewModel.playAlbum(album) },
+                                onPauseClick = { viewModel.pausePlayback() },
+                                onShuffleAllClick = { viewModel.shuffleAlbum(album) },
+                                onEditAlbumName = { newName -> viewModel.updateAlbumName(album.id, newName) },
+                                onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
+                                onAddToQueueClick = { song -> viewModel.addToQueue(song) },
+                                onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
+                                onDeleteSongClick = { song -> viewModel.deleteSong(song) },
+                                onArtistClick = { viewModel.openArtistProfile(it) }
+                            )
+                        }
                     }
 
                     // 3. Artist Profile Screen
-                    selectedArtistProfile != null -> {
-                        ArtistProfileScreen(
-                            artistProfile = selectedArtistProfile!!,
-                            currentSong = currentSong,
-                            isPlaying = isPlaying,
-                            onBackClick = { viewModel.closeArtistProfile() },
-                            onSongClick = { song, songs -> viewModel.playSong(song, songs) },
-                            onPlayAllClick = { viewModel.playArtist(selectedArtistProfile!!) },
-                            onShuffleAllClick = { viewModel.shuffleArtist(selectedArtistProfile!!) },
-                            onAlbumClick = { album -> viewModel.openAlbumDetail(album) },
-                            onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
-                            onAddToQueueClick = { song -> viewModel.addToQueue(song) },
-                            onEditSongClick = { song -> viewModel.openMetadataEditor(song) }
+                    com.example.offlinemusic.ui.DetailScreenType.ARTIST -> {
+                        selectedArtistProfile?.let { artistProfile ->
+                            ArtistProfileScreen(
+                                artistProfile = artistProfile,
+                                currentSong = currentSong,
+                                isPlaying = isPlaying,
+                                onBackClick = { viewModel.popDetailStack() },
+                                onSongClick = { song, songs -> viewModel.playSong(song, songs) },
+                                onPlayAllClick = { viewModel.playArtist(artistProfile) },
+                                onShuffleAllClick = { viewModel.shuffleArtist(artistProfile) },
+                                onAlbumClick = { album -> viewModel.openAlbumDetail(album) },
+                                onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
+                                onAddToQueueClick = { song -> viewModel.addToQueue(song) },
+                                onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
+                                onDeleteSongClick = { song -> viewModel.deleteSong(song) }
+                            )
+                        }
+                    }
+
+                    // 4. Downloads & History Screen
+                    com.example.offlinemusic.ui.DetailScreenType.DOWNLOADS -> {
+                        val allRecords by viewModel.allDownloadRecords.collectAsState()
+                        DownloadsScreen(
+                            records = allRecords,
+                            activeDownloads = downloads,
+                            onBackClick = { viewModel.popDetailStack() },
+                            onRetryDownload = { record -> viewModel.retryDownloadRecord(record) },
+                            onCancelDownload = { id -> viewModel.cancelDownload(id) },
+                            onDeleteRecord = { id -> viewModel.deleteDownloadRecord(id) },
+                            onClearHistory = { viewModel.clearDownloadHistory() },
+                            onPlayRecord = { record -> viewModel.playDownloadedSong(record) }
                         )
                     }
 
-                    // 4. Bottom Navigation Tabs
-                    else -> {
+                    // 5. Bottom Navigation Tabs
+                    null -> {
                         when (currentTab) {
                             BottomNavTab.HOME -> {
                                 HomeScreen(
@@ -193,12 +216,20 @@ fun MainMusicScreen(
                                     folderName = selectedFolderName,
                                     isLoading = isLoading,
                                     pendingReviewCount = pendingReviewCount,
+                                    currentPlayingPlaylistId = currentPlayingPlaylistId,
+                                    isPlaying = isPlaying,
                                     onPlaylistClick = { viewModel.openPlaylistDetail(it) },
                                     onPlayPlaylistClick = { viewModel.playPlaylist(it) },
                                     onNavigateToLibrary = { viewModel.selectTab(BottomNavTab.LIBRARY) },
                                     onRescanClick = { viewModel.rescan() },
                                     onChangeFolderClick = onPickFolderClick,
-                                    onReviewClick = { viewModel.triggerManualReview() }
+                                    onReviewClick = { viewModel.triggerManualReview() },
+                                    onDownloadsClick = { viewModel.openDownloadsScreen() },
+                                    activeDownloadsCount = downloads.values.count {
+                                        it.status == com.example.offlinemusic.downloader.models.DownloadStatus.QUEUED ||
+                                        it.status == com.example.offlinemusic.downloader.models.DownloadStatus.DOWNLOADING ||
+                                        it.status == com.example.offlinemusic.downloader.models.DownloadStatus.ENRICHING
+                                    }
                                 )
                             }
                             BottomNavTab.SEARCH -> {
@@ -226,6 +257,7 @@ fun MainMusicScreen(
                                     onSongAddToPlaylistClick = { songForAddToPlaylist = it },
                                     onAddToQueueClick = { viewModel.addToQueue(it) },
                                     onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
+                                    onDeleteSongClick = { song -> viewModel.deleteSong(song) },
                                     onSaveRecentSearch = { query -> viewModel.addRecentSearch(query) },
                                     availableGenres = availableGenres,
                                     detectedSpotifyPlaylist = detectedSpotifyPlaylist,
@@ -236,7 +268,9 @@ fun MainMusicScreen(
                                     downloads = downloads,
                                     onDownloadTrack = { viewModel.downloadTrack(it) },
                                     onCancelDownload = { viewModel.cancelDownload(it) },
-                                    onRetryDownload = { id, track -> viewModel.retryDownload(id, track) }
+                                    onRetryDownload = { id, track -> viewModel.retryDownload(id, track) },
+                                    onReopenDuplicate = { viewModel.reopenDuplicatePrompt(it) },
+                                    onDownloadsClick = { viewModel.openDownloadsScreen() }
                                 )
                             }
                             BottomNavTab.LIBRARY -> {
@@ -266,7 +300,8 @@ fun MainMusicScreen(
                                     onReviewArtistsClick = { viewModel.triggerManualReview() },
                                     downloadSourceFilter = downloadSourceFilter,
                                     onDownloadSourceFilterChange = { viewModel.setDownloadSourceFilter(it) },
-                                    onNavigateToTab = { viewModel.selectTab(it) }
+                                    onNavigateToTab = { viewModel.selectTab(it) },
+                                    onOpenDownloads = { viewModel.openDownloadsScreen() }
                                 )
                             }
                         }
@@ -363,6 +398,33 @@ fun MainMusicScreen(
             )
         }
 
+        if (duplicatePrompt != null) {
+            DuplicateSongDialog(
+                prompt = duplicatePrompt!!,
+                onKeepBoth = {
+                    viewModel.resolveDuplicate(
+                        duplicatePrompt!!.downloadId,
+                        DuplicateResolution.KEEP_BOTH_DIFFERENT
+                    )
+                },
+                onReplaceExisting = {
+                    viewModel.resolveDuplicate(
+                        duplicatePrompt!!.downloadId,
+                        DuplicateResolution.REPLACE_EXISTING
+                    )
+                },
+                onDiscard = {
+                    viewModel.resolveDuplicate(
+                        duplicatePrompt!!.downloadId,
+                        DuplicateResolution.DISCARD
+                    )
+                },
+                onDecideLater = {
+                    viewModel.dismissDuplicatePromptTemporarily()
+                }
+            )
+        }
+
         if (songForEditMetadata != null) {
             MetadataEditorDialog(
                 song = songForEditMetadata!!,
@@ -418,7 +480,15 @@ fun MainMusicScreen(
                 },
                 onEditMetadataClick = { currentSong?.let { viewModel.openMetadataEditor(it) } },
                 lyrics = currentLyrics,
-                currentLyricsIndex = currentLyricsIndex
+                currentLyricsIndex = currentLyricsIndex,
+                sleepTimerRemainingMs = sleepTimerRemainingMs,
+                sleepTimerSelectedMinutes = sleepTimerSelectedMinutes,
+                onSetSleepTimerMinutes = { viewModel.startSleepTimer(it) },
+                onSetSleepTimerEndOfTrack = { viewModel.startSleepTimerEndOfTrack() },
+                onCancelSleepTimer = { viewModel.cancelSleepTimer() },
+                onDeleteSongClick = { viewModel.deleteSong(it) },
+                onAttachLyrics = { song, uri -> viewModel.attachLyricsToSong(song, uri) },
+                onRemoveLyrics = { song -> viewModel.removeLyricsFromSong(song) }
             )
         }
 

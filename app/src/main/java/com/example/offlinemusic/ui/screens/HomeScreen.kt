@@ -1,5 +1,6 @@
 package com.example.offlinemusic.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,13 +21,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,27 +43,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.offlinemusic.R
 import com.example.offlinemusic.data.model.Playlist
 import com.example.offlinemusic.ui.components.ArtworkView
 import com.example.offlinemusic.ui.components.PlaylistCard
 import java.util.Calendar
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     playlists: List<Playlist>,
     folderName: String?,
     isLoading: Boolean,
     pendingReviewCount: Int,
+    currentPlayingPlaylistId: String? = null,
+    isPlaying: Boolean = false,
     onPlaylistClick: (Playlist) -> Unit,
     onPlayPlaylistClick: (Playlist) -> Unit,
     onNavigateToLibrary: () -> Unit,
     onRescanClick: () -> Unit,
     onChangeFolderClick: () -> Unit,
     onReviewClick: () -> Unit,
+    onDownloadsClick: () -> Unit = {},
+    activeDownloadsCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     // Dynamic time-based greeting
@@ -81,52 +93,60 @@ fun HomeScreen(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        // 1. Header with greeting and top actions
+        // 1. BitTune Mascot Brand Header with greeting and top actions
         item {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = greeting,
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = (-0.5).sp
-                            ),
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        // Folder source indicator pill
-                        Row(
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_bittune_logo),
+                            contentDescription = "BitTune Mascot",
                             modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                                .clickable { onChangeFolderClick() }
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Folder,
-                                contentDescription = null,
-                                modifier = Modifier.size(13.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                        )
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "BitTune",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.Black,
+                                        letterSpacing = (-0.5).sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                                        .border(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "HI-FI",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 9.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                             Text(
-                                text = folderName ?: "No Folder",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                                color = MaterialTheme.colorScheme.onBackground,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "• Change",
-                                style = MaterialTheme.typography.labelSmall,
+                                text = greeting,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -152,6 +172,24 @@ fun HomeScreen(
                             }
                         }
 
+                        IconButton(onClick = onDownloadsClick) {
+                            if (activeDownloadsCount > 0) {
+                                BadgedBox(badge = { Badge { Text("$activeDownloadsCount") } }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Downloads",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Downloads",
+                                    tint = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+                        }
+
                         IconButton(onClick = onRescanClick, enabled = !isLoading) {
                             if (isLoading) {
                                 CircularProgressIndicator(
@@ -169,9 +207,40 @@ fun HomeScreen(
                         }
                     }
                 }
+
+                // Folder source indicator pill
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                        .clickable { onChangeFolderClick() }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Folder,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = folderName ?: "No Folder",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "• Change",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
-
         // 2. Spotify-style 2-column Quick Access Grid (Compact Cards for top playlists)
         if (quickPicks.isNotEmpty()) {
             item {
@@ -183,8 +252,10 @@ fun HomeScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             rowPlaylists.forEach { playlist ->
+                                val isThisPlaying = isPlaying && (currentPlayingPlaylistId == playlist.id)
                                 HomeQuickPlaylistItem(
                                     playlist = playlist,
+                                    isPlaying = isThisPlaying,
                                     onClick = { onPlaylistClick(playlist) },
                                     onPlayClick = { onPlayPlaylistClick(playlist) },
                                     modifier = Modifier.weight(1f)
@@ -248,8 +319,10 @@ fun HomeScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             chunk.forEach { playlist ->
+                                val isThisPlaying = isPlaying && (currentPlayingPlaylistId == playlist.id)
                                 PlaylistCard(
                                     playlist = playlist,
+                                    isPlaying = isThisPlaying,
                                     onClick = { onPlaylistClick(playlist) },
                                     onPlayClick = { onPlayPlaylistClick(playlist) },
                                     modifier = Modifier.weight(1f)
@@ -358,6 +431,7 @@ fun HomeScreen(
 @Composable
 private fun HomeQuickPlaylistItem(
     playlist: Playlist,
+    isPlaying: Boolean = false,
     onClick: () -> Unit,
     onPlayClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -454,7 +528,7 @@ private fun HomeQuickPlaylistItem(
             modifier = Modifier.weight(1f)
         )
 
-        // Quick play button
+        // Quick play / pause button
         if (playlist.songCount > 0) {
             Box(
                 modifier = Modifier
@@ -466,8 +540,8 @@ private fun HomeQuickPlaylistItem(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "Play",
+                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play",
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(16.dp)
                 )

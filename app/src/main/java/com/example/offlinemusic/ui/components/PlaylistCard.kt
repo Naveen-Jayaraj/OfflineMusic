@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material3.Icon
@@ -42,6 +43,7 @@ fun PlaylistCard(
     playlist: Playlist,
     onClick: () -> Unit,
     onPlayClick: () -> Unit,
+    isPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val isLiked = playlist.isLikedSpecial
@@ -131,7 +133,7 @@ fun PlaylistCard(
                 }
             }
 
-            // Play button overlay
+            // Play / Pause button overlay
             if (playlist.songCount > 0) {
                 Box(
                     modifier = Modifier
@@ -144,8 +146,8 @@ fun PlaylistCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Play Playlist",
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause Playlist" else "Play Playlist",
                         tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(20.dp)
                     )

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Offline Music</string>
-    <string name="playback_channel_name">Music Playback</string>
-    <string name="playback_channel_description">Offline Music playback notifications and island controls</string>
+    <string name="app_name">BitTune</string>
+    <string name="playback_channel_name">BitTune Music Playback</string>
+    <string name="playback_channel_description">BitTune retro high-fidelity music playback controls</string>
 </resources>

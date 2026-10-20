@@ -1,5 +1,6 @@
 package com.example.offlinemusic.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,20 +28,25 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -64,6 +70,7 @@ import com.example.offlinemusic.data.model.Album
 import com.example.offlinemusic.data.model.Playlist
 import com.example.offlinemusic.data.model.Song
 import com.example.offlinemusic.downloader.models.DownloadProgress
+import com.example.offlinemusic.downloader.models.DownloadStatus
 import com.example.offlinemusic.downloader.models.DownloadableTrack
 import com.example.offlinemusic.downloader.models.SpotifyPlaylistInfo
 import com.example.offlinemusic.ui.SearchResults
@@ -71,7 +78,7 @@ import com.example.offlinemusic.ui.components.ArtworkView
 import com.example.offlinemusic.ui.components.DownloadableTrackItem
 import com.example.offlinemusic.ui.components.SpotifyPlaylistPreviewCard
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     searchQuery: String,
@@ -90,6 +97,7 @@ fun SearchScreen(
     onSongAddToPlaylistClick: (Song) -> Unit,
     onAddToQueueClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit,
+    onDeleteSongClick: (Song) -> Unit = {},
     onSaveRecentSearch: (String) -> Unit,
     availableGenres: List<String> = emptyList(),
     detectedSpotifyPlaylist: SpotifyPlaylistInfo? = null,
@@ -101,9 +109,12 @@ fun SearchScreen(
     onDownloadTrack: (DownloadableTrack) -> Unit = {},
     onCancelDownload: (String) -> Unit = {},
     onRetryDownload: (String, DownloadableTrack) -> Unit = { _, _ -> },
+    onReopenDuplicate: (String) -> Unit = {},
+    onDownloadsClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
+    var songToDelete by remember { mutableStateOf<Song?>(null) }
 
     Column(
         modifier = modifier
@@ -116,14 +127,55 @@ fun SearchScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            Text(
-                text = "Search",
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = (-0.5).sp
-                ),
-                color = MaterialTheme.colorScheme.onBackground
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Search",
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.5).sp
+                    ),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+
+                val activeCount = downloads.values.count {
+                    it.status == DownloadStatus.QUEUED || it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.ENRICHING
+                }
+
+                // Dedicated Downloads Button in the top corner of the search page
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (activeCount > 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(
+                        1.dp,
+                        if (activeCount > 0) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                    ),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable { onDownloadsClick() }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Downloads",
+                            tint = if (activeCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (activeCount > 0) "Downloads ($activeCount)" else "Downloads",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = if (activeCount > 0) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -538,6 +590,14 @@ fun SearchScreen(
                                             onEditSongClick(song)
                                         }
                                     )
+                                    DropdownMenuItem(
+                                        text = { Text("Delete Song Completely", color = MaterialTheme.colorScheme.error) },
+                                        leadingIcon = { Icon(Icons.Default.DeleteForever, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                        onClick = {
+                                            menuExpanded = false
+                                            songToDelete = song
+                                        }
+                                    )
                                     val songArtists = song.artist.split(",", "/", ";", "\\")
                                         .map { it.trim() }
                                         .filter { it.isNotEmpty() }
@@ -669,14 +729,26 @@ fun SearchScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(
-                                text = "ONLINE DOWNLOADS",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "ONLINE DOWNLOADS",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 1.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "• View All",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .clickable { onDownloadsClick() }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
 
                             if (isOnlineSearching) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -698,10 +770,17 @@ fun SearchScreen(
 
                     if (onlineSearchResults.isNotEmpty()) {
                         items(onlineSearchResults, key = { "${it.source}_${it.id}" }) { onlineTrack ->
+                            val progress = downloads[onlineTrack.id]
                             DownloadableTrackItem(
                                 track = onlineTrack,
-                                downloadProgress = downloads[onlineTrack.id],
-                                onDownload = { onDownloadTrack(onlineTrack) },
+                                downloadProgress = progress,
+                                onDownload = {
+                                    if (progress?.status == DownloadStatus.DUPLICATE_FOUND) {
+                                        onReopenDuplicate(onlineTrack.id)
+                                    } else {
+                                        onDownloadTrack(onlineTrack)
+                                    }
+                                },
                                 onCancel = { onCancelDownload(onlineTrack.id) },
                                 onRetry = { onRetryDownload(onlineTrack.id, onlineTrack) }
                             )
@@ -736,6 +815,17 @@ fun SearchScreen(
                     Spacer(modifier = Modifier.height(100.dp))
                 }
             }
+        }
+
+        if (songToDelete != null) {
+            com.example.offlinemusic.ui.components.DeleteSongConfirmDialog(
+                song = songToDelete,
+                onConfirmDelete = {
+                    onDeleteSongClick(it)
+                    songToDelete = null
+                },
+                onDismiss = { songToDelete = null }
+            )
         }
     }
 }

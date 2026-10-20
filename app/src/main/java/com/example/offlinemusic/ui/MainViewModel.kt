@@ -16,6 +16,7 @@ import com.example.offlinemusic.data.repository.MusicPreferences
 import com.example.offlinemusic.data.repository.MusicScanner
 import com.example.offlinemusic.player.MusicPlayerManager
 import com.example.offlinemusic.data.database.entities.ArtistEntity
+import com.example.offlinemusic.data.database.entities.DownloadRecordEntity
 import com.example.offlinemusic.data.repository.ArtistNormalizer
 import com.example.offlinemusic.ui.components.ArtistReviewPromptData
 import com.example.offlinemusic.ui.navigation.BottomNavTab
@@ -25,8 +26,11 @@ import com.example.offlinemusic.downloader.engine.LucidaDownloader
 import com.example.offlinemusic.downloader.engine.SpotifyPlaylistClient
 import com.example.offlinemusic.downloader.engine.YouTubeDownloader
 import com.example.offlinemusic.downloader.models.DownloadProgress
+import com.example.offlinemusic.downloader.models.DownloadSource
 import com.example.offlinemusic.downloader.models.DownloadSourceFilter
 import com.example.offlinemusic.downloader.models.DownloadableTrack
+import com.example.offlinemusic.downloader.models.DuplicatePromptData
+import com.example.offlinemusic.downloader.models.DuplicateResolution
 import com.example.offlinemusic.downloader.models.SpotifyPlaylistInfo
 import com.example.offlinemusic.downloader.models.SyncedLyrics
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +45,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+enum class DetailScreenType {
+    PLAYLIST,
+    ALBUM,
+    ARTIST,
+    DOWNLOADS
+}
 
 data class SearchResults(
     val songs: List<Song> = emptyList(),
@@ -112,6 +123,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _artistChooserList = MutableStateFlow<List<String>?>(null)
     val artistChooserList: StateFlow<List<String>?> = _artistChooserList.asStateFlow()
 
+    private val _detailStack = MutableStateFlow<List<DetailScreenType>>(emptyList())
+    val detailStack: StateFlow<List<DetailScreenType>> = _detailStack.asStateFlow()
+
+    private val _currentPlayingPlaylistId = MutableStateFlow<String?>(null)
+    val currentPlayingPlaylistId: StateFlow<String?> = _currentPlayingPlaylistId.asStateFlow()
+
     private val _songForEditMetadata = MutableStateFlow<Song?>(null)
     val songForEditMetadata: StateFlow<Song?> = _songForEditMetadata.asStateFlow()
 
@@ -129,6 +146,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val downloadManager = DownloadManager.getInstance(application)
     val downloads: StateFlow<Map<String, DownloadProgress>> = downloadManager.downloads
+    val duplicatePrompt: StateFlow<DuplicatePromptData?> = downloadManager.duplicatePrompt
+    val allDownloadRecords: StateFlow<List<DownloadRecordEntity>> = downloadManager.allDownloadRecords
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private val _downloadSourceFilter = MutableStateFlow(preferences.downloadSourcePreference)
     val downloadSourceFilter: StateFlow<DownloadSourceFilter> = _downloadSourceFilter.asStateFlow()
@@ -483,6 +503,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectTab(tab: BottomNavTab) {
+        _detailStack.value = emptyList()
+        _selectedPlaylistDetail.value = null
+        _selectedAlbumDetail.value = null
+        _selectedArtistProfile.value = null
         _currentTab.value = tab
     }
 
@@ -540,6 +564,133 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun retryDownload(id: String, track: DownloadableTrack) {
         downloadManager.retryDownload(id, track)
+    }
+
+    fun resolveDuplicate(downloadId: String, resolution: DuplicateResolution) {
+        downloadManager.resolveDuplicate(downloadId, resolution)
+    }
+
+    fun reopenDuplicatePrompt(downloadId: String) {
+        downloadManager.reopenDuplicatePrompt(downloadId)
+    }
+
+    fun dismissDuplicatePromptTemporarily() {
+        downloadManager.dismissDuplicatePromptTemporarily()
+    }
+
+    fun openDownloadsScreen() {
+        _detailStack.value = _detailStack.value.filter { it != DetailScreenType.DOWNLOADS } + DetailScreenType.DOWNLOADS
+    }
+
+    fun deleteDownloadRecord(id: String) {
+        downloadManager.deleteDownloadRecord(id)
+    }
+
+    fun clearDownloadHistory() {
+        downloadManager.clearDownloadHistory()
+    }
+
+    fun retryDownloadRecord(record: DownloadRecordEntity) {
+        val track = DownloadableTrack(
+            id = record.id,
+            title = record.title,
+            artist = record.artist,
+            durationMs = record.durationMs,
+            source = when (record.source.uppercase()) {
+                "LUCIDA" -> DownloadSource.LUCIDA
+                else -> DownloadSource.YOUTUBE
+            },
+            sourceUrl = record.sourceUrl,
+            thumbnailUrl = record.thumbnailUrl
+        )
+        downloadManager.retryDownload(record.id, track)
+    }
+
+    fun playDownloadedSong(record: DownloadRecordEntity) {
+        val song = _allSongs.value.find { it.id == record.id || it.title.equals(record.title, ignoreCase = true) }
+        if (song != null) {
+            playSong(song, listOf(song))
+        }
+    }
+
+    fun attachLyricsToSong(song: Song, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val content = getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                if (!content.isNullOrBlank()) {
+                    val success = scanner.repository.saveLyricsForTrack(song.id, content)
+                    if (success) {
+                        val parsed = LrclibClient.parseLrcContent(content)
+                        if (playerManager.currentSong.value?.id == song.id) {
+                            _currentLyrics.value = parsed
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun removeLyricsFromSong(song: Song) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val success = scanner.repository.removeLyricsForTrack(song.id)
+                if (success) {
+                    if (playerManager.currentSong.value?.id == song.id) {
+                        _currentLyrics.value = null
+                        _currentLyricsIndex.value = -1
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    val sleepTimerRemainingMs: StateFlow<Long?> = playerManager.sleepTimerRemainingMs
+    val sleepTimerSelectedMinutes: StateFlow<Int?> = playerManager.sleepTimerSelectedMinutes
+
+    fun startSleepTimer(minutes: Int) {
+        playerManager.startSleepTimer(minutes)
+    }
+
+    fun startSleepTimerEndOfTrack() {
+        playerManager.startSleepTimerEndOfTrack()
+    }
+
+    fun cancelSleepTimer() {
+        playerManager.cancelSleepTimer()
+    }
+
+    fun deleteSong(song: Song) {
+        viewModelScope.launch {
+            // Remove from player queue / playback if currently loaded
+            playerManager.removeTrackFromPlayer(song.id)
+
+            // Permanently delete file, LRC lyrics, and Room DB records
+            val success = scanner.repository.deleteSongPermanently(song.id)
+            if (success) {
+                // If playlist detail is currently open, refresh its tracks
+                val currentPl = _selectedPlaylistDetail.value
+                if (currentPl != null) {
+                    val full = scanner.repository.getPlaylistWithSongs(currentPl.id)
+                    _selectedPlaylistDetail.value = full
+                }
+                // If album detail is open, refresh
+                val currentAlbum = _selectedAlbumDetail.value
+                if (currentAlbum != null) {
+                    val full = scanner.repository.getAlbumWithSongs(currentAlbum.id)
+                    _selectedAlbumDetail.value = full
+                }
+                // If artist profile is open, refresh
+                val currentArtist = _selectedArtistProfile.value
+                if (currentArtist != null) {
+                    val profile = scanner.repository.getArtistProfile(currentArtist.name)
+                    _selectedArtistProfile.value = profile
+                }
+            }
+        }
     }
 
     private fun triggerOnlineSearch(query: String) {
@@ -661,9 +812,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openPlaylistDetail(playlist: Playlist) {
         _selectedPlaylistDetail.value = playlist
+        _detailStack.value = _detailStack.value.filter { it != DetailScreenType.PLAYLIST } + DetailScreenType.PLAYLIST
         viewModelScope.launch {
             val full = scanner.repository.getPlaylistWithSongs(playlist.id)
-            if (full != null) {
+            if (full != null && _selectedPlaylistDetail.value?.id == playlist.id) {
                 _selectedPlaylistDetail.value = full
             }
         }
@@ -671,9 +823,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closePlaylistDetail() {
         _selectedPlaylistDetail.value = null
+        _detailStack.value = _detailStack.value.filter { it != DetailScreenType.PLAYLIST }
     }
 
     fun openAlbumDetail(album: Album) {
+        _detailStack.value = _detailStack.value.filter { it != DetailScreenType.ALBUM } + DetailScreenType.ALBUM
         viewModelScope.launch {
             val albumWithSongs = scanner.getAlbumWithSongs(album.id) ?: album
             _selectedAlbumDetail.value = albumWithSongs
@@ -682,6 +836,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeAlbumDetail() {
         _selectedAlbumDetail.value = null
+        _detailStack.value = _detailStack.value.filter { it != DetailScreenType.ALBUM }
     }
 
     fun updateAlbumName(albumId: String, newName: String) {
@@ -712,6 +867,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openArtistProfile(artistName: String) {
+        _isFullPlayerVisible.value = false
         viewModelScope.launch {
             val collaborators = ArtistNormalizer.splitCollaborators(artistName)
                 .map { ArtistNormalizer.resolveCanonicalName(it) }
@@ -719,11 +875,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val targetName = if (collaborators.isNotEmpty()) collaborators.first() else artistName
             val profile = scanner.getArtistProfile(targetName)
             _selectedArtistProfile.value = profile
+            _detailStack.value = _detailStack.value.filter { it != DetailScreenType.ARTIST } + DetailScreenType.ARTIST
         }
     }
 
     fun closeArtistProfile() {
         _selectedArtistProfile.value = null
+        _detailStack.value = _detailStack.value.filter { it != DetailScreenType.ARTIST }
+    }
+
+    fun popDetailStack(): Boolean {
+        val current = _detailStack.value
+        if (current.isEmpty()) return false
+        val newStack = current.dropLast(1)
+        _detailStack.value = newStack
+        if (!newStack.contains(DetailScreenType.PLAYLIST)) {
+            _selectedPlaylistDetail.value = null
+        }
+        if (!newStack.contains(DetailScreenType.ALBUM)) {
+            _selectedAlbumDetail.value = null
+        }
+        if (!newStack.contains(DetailScreenType.ARTIST)) {
+            _selectedArtistProfile.value = null
+        }
+        return true
     }
 
     fun createPlaylist(name: String) {
@@ -822,7 +997,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val full = if (playlist.songs.isEmpty()) scanner.repository.getPlaylistWithSongs(playlist.id) ?: playlist else playlist
             if (full.songs.isNotEmpty()) {
-                playerManager.playSong(full.songs.first(), full.songs)
+                val isCurrentlyPlayingThis = playerManager.isPlaying.value && (
+                    _currentPlayingPlaylistId.value == playlist.id ||
+                    (playerManager.currentSong.value != null && full.songs.any { it.id == playerManager.currentSong.value?.id })
+                )
+                if (isCurrentlyPlayingThis) {
+                    playerManager.pause()
+                } else {
+                    _currentPlayingPlaylistId.value = playlist.id
+                    playerManager.playSong(full.songs.first(), full.songs)
+                }
             }
         }
     }

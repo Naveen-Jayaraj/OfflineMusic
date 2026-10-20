@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaScannerConnection
 import android.os.Environment
 import com.example.offlinemusic.data.database.AppDatabase
+import com.example.offlinemusic.data.database.entities.DownloadRecordEntity
 import com.example.offlinemusic.data.database.entities.PlaylistEntity
 import com.example.offlinemusic.data.database.entities.PlaylistTrackEntity
 import com.example.offlinemusic.data.model.Song
@@ -18,13 +19,21 @@ import com.example.offlinemusic.downloader.models.DownloadProgress
 import com.example.offlinemusic.downloader.models.DownloadSource
 import com.example.offlinemusic.downloader.models.DownloadStatus
 import com.example.offlinemusic.downloader.models.DownloadableTrack
+import com.example.offlinemusic.downloader.models.DuplicatePromptData
+import com.example.offlinemusic.downloader.models.DuplicateResolution
 import com.example.offlinemusic.downloader.models.SpotifyPlaylistInfo
 import com.example.offlinemusic.downloader.models.SpotifyTrackInfo
 import com.example.offlinemusic.downloader.service.DownloadService
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +44,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -43,6 +53,9 @@ class DownloadManager private constructor(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val db = AppDatabase.getInstance(context)
     private val playlistDao = db.playlistDao()
+    val downloadDao = db.downloadDao()
+    val allDownloadRecords = downloadDao.getAllDownloadsFlow()
+
     private val musicScanner = MusicScanner(context)
 
     private val httpClient = OkHttpClient.Builder()
@@ -53,6 +66,11 @@ class DownloadManager private constructor(private val context: Context) {
 
     private val _downloads = MutableStateFlow<Map<String, DownloadProgress>>(emptyMap())
     val downloads: StateFlow<Map<String, DownloadProgress>> = _downloads.asStateFlow()
+
+    private val _duplicatePrompt = MutableStateFlow<DuplicatePromptData?>(null)
+    val duplicatePrompt: StateFlow<DuplicatePromptData?> = _duplicatePrompt.asStateFlow()
+
+    private val duplicateQueue = ArrayDeque<DuplicatePromptData>()
 
     private val cancelledIds = ConcurrentHashMap.newKeySet<String>()
     private val runningJobs = ConcurrentHashMap<String, Job>()
@@ -89,12 +107,74 @@ class DownloadManager private constructor(private val context: Context) {
         runningJobs[id]?.cancel()
         runningJobs.remove(id)
 
+        // Cancel any pending duplicate prompt for this download
+        val currentPrompt = _duplicatePrompt.value
+        if (currentPrompt?.downloadId == id) {
+            currentPrompt.continuation.complete(DuplicateResolution.DISCARD)
+            _duplicatePrompt.value = duplicateQueue.pollFirst()
+        } else {
+            val it = duplicateQueue.iterator()
+            while (it.hasNext()) {
+                val item = it.next()
+                if (item.downloadId == id) {
+                    item.continuation.complete(DuplicateResolution.DISCARD)
+                    it.remove()
+                    break
+                }
+            }
+        }
+
         _downloads.update { current ->
             val existing = current[id] ?: return@update current
             current + (id to existing.copy(status = DownloadStatus.CANCELLED, error = "Cancelled by user"))
         }
 
         checkAndStopServiceIfIdle()
+    }
+
+    fun resolveDuplicate(downloadId: String, resolution: DuplicateResolution) {
+        val current = _duplicatePrompt.value
+        if (current?.downloadId == downloadId) {
+            _duplicatePrompt.value = duplicateQueue.pollFirst()
+            current.continuation.complete(resolution)
+        } else {
+            val it = duplicateQueue.iterator()
+            while (it.hasNext()) {
+                val item = it.next()
+                if (item.downloadId == downloadId) {
+                    item.continuation.complete(resolution)
+                    it.remove()
+                    break
+                }
+            }
+        }
+    }
+
+    fun reopenDuplicatePrompt(downloadId: String) {
+        val current = _duplicatePrompt.value
+        if (current?.downloadId == downloadId) return
+        val item = duplicateQueue.firstOrNull { it.downloadId == downloadId }
+        if (item != null) {
+            duplicateQueue.remove(item)
+            if (current != null) {
+                duplicateQueue.addFirst(current)
+            }
+            _duplicatePrompt.value = item
+        }
+    }
+
+    fun dismissDuplicatePromptTemporarily() {
+        val current = _duplicatePrompt.value ?: return
+        duplicateQueue.addFirst(current)
+        _duplicatePrompt.value = null
+    }
+
+    private fun enqueueDuplicatePrompt(prompt: DuplicatePromptData) {
+        if (_duplicatePrompt.value == null) {
+            _duplicatePrompt.value = prompt
+        } else {
+            duplicateQueue.add(prompt)
+        }
     }
 
     fun retryDownload(id: String, track: DownloadableTrack) {
@@ -117,6 +197,23 @@ class DownloadManager private constructor(private val context: Context) {
         )
         _downloads.update { it + (downloadId to initialProgress) }
 
+        scope.launch(Dispatchers.IO) {
+            downloadDao.insertOrUpdate(
+                DownloadRecordEntity(
+                    id = downloadId,
+                    title = track.title,
+                    artist = track.artist,
+                    source = track.source.name,
+                    sourceUrl = track.sourceUrl,
+                    thumbnailUrl = track.thumbnailUrl,
+                    status = "DOWNLOADING",
+                    progress = 0.05f,
+                    durationMs = track.durationMs,
+                    createdTimestamp = System.currentTimeMillis()
+                )
+            )
+        }
+
         val job = scope.launch {
             DownloadService.startService(context, "Downloading ${track.title}...", 0)
             try {
@@ -126,10 +223,12 @@ class DownloadManager private constructor(private val context: Context) {
                     _downloads.update {
                         it + (downloadId to initialProgress.copy(status = DownloadStatus.CANCELLED, error = "Cancelled"))
                     }
+                    downloadDao.updateStatus(downloadId, "CANCELLED", "Cancelled by user")
                 } else {
                     _downloads.update {
                         it + (downloadId to initialProgress.copy(status = DownloadStatus.FAILED, error = e.localizedMessage ?: "Download failed"))
                     }
+                    downloadDao.updateStatus(downloadId, "FAILED", e.localizedMessage ?: "Download failed")
                 }
             } finally {
                 runningJobs.remove(downloadId)
@@ -162,6 +261,20 @@ class DownloadManager private constructor(private val context: Context) {
         val job = scope.launch {
             DownloadService.startService(context, "Importing ${playlistInfo.name} (0/$totalTracks)...", 0)
 
+            downloadDao.insertOrUpdate(
+                DownloadRecordEntity(
+                    id = batchId,
+                    title = playlistInfo.name,
+                    artist = "${totalTracks} tracks (Spotify)",
+                    source = "SPOTIFY",
+                    sourceUrl = "spotify:playlist:${playlistInfo.id}",
+                    thumbnailUrl = playlistInfo.thumbnail,
+                    status = "DOWNLOADING",
+                    progress = 0f,
+                    createdTimestamp = System.currentTimeMillis()
+                )
+            )
+
             try {
                 // 1. Create Playlist Entity
                 val playlistEntityId = "spotify_pl_${playlistInfo.id}_${System.currentTimeMillis()}"
@@ -177,69 +290,142 @@ class DownloadManager private constructor(private val context: Context) {
 
                 val playlistSubDir = File(downloadDir, sanitizeFilename(playlistInfo.name)).apply { mkdirs() }
 
-                var completedCount = 0
+                // 2. High-performance single-pass in-memory duplicate check
+                val existingSongs = musicScanner.repository.getAllSongs()
+                val duplicatesMap = mutableMapOf<Int, Song>()
+                val toDownload = mutableListOf<IndexedValue<SpotifyTrackInfo>>()
 
                 for ((index, spotifyTrack) in playlistInfo.tracks.withIndex()) {
-                    if (cancelledIds.contains(batchId)) {
-                        break
-                    }
-
-                    _downloads.update { current ->
-                        current + (batchId to initialBatch.copy(
-                            status = DownloadStatus.DOWNLOADING,
-                            batchCurrent = index + 1,
-                            trackTitle = spotifyTrack.title,
-                            artist = spotifyTrack.artist,
-                            progress = (index.toFloat() / totalTracks.toFloat()).coerceIn(0f, 1f)
-                        ))
-                    }
-
-                    val notifProgress = ((index.toFloat() / totalTracks.toFloat()) * 100).toInt()
-                    DownloadService.updateProgress(context, "(${index + 1}/$totalTracks) ${spotifyTrack.title}", notifProgress)
-
-                    try {
-                        val candidateTrack = resolveSpotifyTrackToCandidate(spotifyTrack)
-                        if (candidateTrack != null) {
-                            val downloadedSong = executeTrackDownload(
-                                candidateTrack,
-                                customTargetDir = playlistSubDir,
-                                addToRecentlyDownloaded = false // DO NOT add to Recently Downloaded
-                            )
-
-                            if (downloadedSong != null) {
-                                playlistDao.insertPlaylistTrack(
-                                    PlaylistTrackEntity(
-                                        playlistId = playlistEntityId,
-                                        trackId = downloadedSong.id,
-                                        position = index,
-                                        addedTimestamp = System.currentTimeMillis()
-                                    )
-                                )
-                                completedCount++
-                            }
-                        }
-                    } catch (_: Exception) {
-                        // Continue to next track in playlist on single track failure
+                    val duplicateMatch = FuzzyMatcher.findDuplicateSong(
+                        queryTitle = spotifyTrack.title,
+                        queryArtist = spotifyTrack.artist,
+                        databaseSongs = existingSongs,
+                        threshold = 0.70
+                    )
+                    if (duplicateMatch != null) {
+                        duplicatesMap[index] = duplicateMatch.matchedSong
+                    } else {
+                        toDownload.add(IndexedValue(index, spotifyTrack))
                     }
                 }
 
+                // Immediately insert all duplicates into playlist with their preserved positions
+                if (duplicatesMap.isNotEmpty()) {
+                    val duplicateEntities = duplicatesMap.map { (index, song) ->
+                        PlaylistTrackEntity(
+                            playlistId = playlistEntityId,
+                            trackId = song.id,
+                            position = index,
+                            addedTimestamp = System.currentTimeMillis()
+                        )
+                    }
+                    playlistDao.insertPlaylistTracks(duplicateEntities)
+                }
+
+                val completedCounter = AtomicInteger(duplicatesMap.size)
+                val initialDupCount = duplicatesMap.size
+
+                _downloads.update { current ->
+                    current + (batchId to initialBatch.copy(
+                        status = DownloadStatus.DOWNLOADING,
+                        batchCurrent = initialDupCount,
+                        progress = (initialDupCount.toFloat() / totalTracks.toFloat()).coerceIn(0f, 1f)
+                    ))
+                }
+
+                // 3. Autobatched concurrent download pipeline (3 parallel workers)
+                val semaphore = Semaphore(3)
+                coroutineScope {
+                    toDownload.map { indexedTrack ->
+                        launch {
+                            if (cancelledIds.contains(batchId)) return@launch
+                            val index = indexedTrack.index
+                            val spotifyTrack = indexedTrack.value
+
+                            semaphore.withPermit {
+                                if (cancelledIds.contains(batchId)) return@withPermit
+                                try {
+                                    val candidateTrack = resolveSpotifyTrackToCandidate(spotifyTrack)
+                                    if (candidateTrack != null) {
+                                        val downloadedSong = executeTrackDownload(
+                                            candidateTrack,
+                                            customTargetDir = playlistSubDir,
+                                            addToRecentlyDownloaded = false,
+                                            checkDuplicates = false
+                                        )
+
+                                        if (downloadedSong != null) {
+                                            playlistDao.insertPlaylistTrack(
+                                                PlaylistTrackEntity(
+                                                    playlistId = playlistEntityId,
+                                                    trackId = downloadedSong.id,
+                                                    position = index, // Preserve original index
+                                                    addedTimestamp = System.currentTimeMillis()
+                                                )
+                                            )
+                                        }
+                                    }
+                                } catch (_: Exception) {
+                                } finally {
+                                    val currentDone = completedCounter.incrementAndGet()
+                                    val frac = (currentDone.toFloat() / totalTracks.toFloat()).coerceIn(0f, 1f)
+
+                                    _downloads.update { current ->
+                                        current + (batchId to initialBatch.copy(
+                                            status = DownloadStatus.DOWNLOADING,
+                                            batchCurrent = currentDone,
+                                            trackTitle = spotifyTrack.title,
+                                            artist = spotifyTrack.artist,
+                                            progress = frac
+                                        ))
+                                    }
+
+                                    val notifProg = (frac * 100).toInt()
+                                    DownloadService.updateProgress(
+                                        context,
+                                        "($currentDone/$totalTracks) ${spotifyTrack.title}",
+                                        notifProg
+                                    )
+                                }
+                            }
+                        }
+                    }.joinAll()
+                }
+
+                val finalCompleted = completedCounter.get()
                 if (cancelledIds.contains(batchId)) {
                     _downloads.update {
                         it + (batchId to initialBatch.copy(status = DownloadStatus.CANCELLED, error = "Cancelled by user"))
                     }
+                    downloadDao.updateStatus(batchId, "CANCELLED", "Cancelled by user")
                 } else {
                     _downloads.update {
                         it + (batchId to initialBatch.copy(
                             status = DownloadStatus.COMPLETED,
-                            batchCurrent = completedCount,
+                            batchCurrent = finalCompleted,
                             progress = 1.0f
                         ))
                     }
+                    downloadDao.insertOrUpdate(
+                        DownloadRecordEntity(
+                            id = batchId,
+                            title = playlistInfo.name,
+                            artist = "${finalCompleted}/$totalTracks tracks downloaded",
+                            source = "SPOTIFY",
+                            sourceUrl = "spotify:playlist:${playlistInfo.id}",
+                            thumbnailUrl = playlistInfo.thumbnail,
+                            status = "COMPLETED",
+                            progress = 1.0f,
+                            filePath = playlistSubDir.absolutePath,
+                            completedTimestamp = System.currentTimeMillis()
+                        )
+                    )
                 }
             } catch (e: Exception) {
                 _downloads.update {
                     it + (batchId to initialBatch.copy(status = DownloadStatus.FAILED, error = e.localizedMessage ?: "Playlist download failed"))
                 }
+                downloadDao.updateStatus(batchId, "FAILED", e.localizedMessage ?: "Playlist download failed")
             } finally {
                 runningJobs.remove(batchId)
                 checkAndStopServiceIfIdle()
@@ -273,7 +459,8 @@ class DownloadManager private constructor(private val context: Context) {
     private suspend fun executeTrackDownload(
         track: DownloadableTrack,
         customTargetDir: File? = null,
-        addToRecentlyDownloaded: Boolean = true
+        addToRecentlyDownloaded: Boolean = true,
+        checkDuplicates: Boolean = true
     ): Song? = withContext(Dispatchers.IO) {
         val downloadId = track.id
         val targetDir = customTargetDir ?: downloadDir
@@ -399,6 +586,115 @@ class DownloadManager private constructor(private val context: Context) {
             try { looseThumb.delete() } catch (_: Exception) {}
         }
 
+        // Check whether the same song already exists in the database (Fuzzy matching on Title and Artist >= 70%)
+        if (checkDuplicates) {
+            val databaseSongs = musicScanner.repository.getAllSongs()
+            val duplicateResult = FuzzyMatcher.findDuplicateSong(
+                queryTitle = enriched.title.ifBlank { track.title },
+                queryArtist = enriched.artist.ifBlank { track.artist },
+                databaseSongs = databaseSongs,
+                threshold = 0.70
+            )
+
+            if (duplicateResult != null) {
+                val continuation = CompletableDeferred<DuplicateResolution>()
+                val prompt = DuplicatePromptData(
+                    downloadId = downloadId,
+                    downloadedTrack = track,
+                    downloadedAudioFile = targetAudioFile,
+                    downloadedFormat = formatExt,
+                    downloadedSizeBytes = targetAudioFile.length(),
+                    downloadedDurationMs = if (track.durationMs > 0) track.durationMs else 0L,
+                    downloadedArtworkFile = if (artworkFile.exists()) artworkFile else null,
+                    downloadedLrcFile = if (lrcFile.exists()) lrcFile else null,
+                    enrichedTitle = enriched.title,
+                    enrichedArtist = enriched.artist,
+                    enrichedAlbum = enriched.album,
+                    existingSong = duplicateResult.matchedSong,
+                    matchPercentage = duplicateResult.percentage,
+                    continuation = continuation
+                )
+
+                _downloads.update { current ->
+                    val existing = current[downloadId] ?: return@update current
+                    current + (downloadId to existing.copy(
+                        status = DownloadStatus.DUPLICATE_FOUND,
+                        error = "Duplicate found (${duplicateResult.percentage}% match with '${duplicateResult.matchedSong.title}')"
+                    ))
+                }
+
+                DownloadService.updateProgress(
+                    context,
+                    "Duplicate found: ${enriched.title} (${duplicateResult.percentage}% match)",
+                    100
+                )
+
+                enqueueDuplicatePrompt(prompt)
+
+                val resolution = try {
+                    continuation.await()
+                } catch (e: Exception) {
+                    DuplicateResolution.DISCARD
+                }
+
+                when (resolution) {
+                    DuplicateResolution.DISCARD -> {
+                        // Discard downloaded file and cached files
+                        try { if (targetAudioFile.exists()) targetAudioFile.delete() } catch (_: Exception) {}
+                        try { if (lrcFile.exists()) lrcFile.delete() } catch (_: Exception) {}
+                        try { if (artworkFile.exists()) artworkFile.delete() } catch (_: Exception) {}
+
+                        _downloads.update { current ->
+                            val existing = current[downloadId] ?: return@update current
+                            current + (downloadId to existing.copy(status = DownloadStatus.CANCELLED, error = "Discarded download"))
+                        }
+                        return@withContext null
+                    }
+                    DuplicateResolution.REPLACE_EXISTING -> {
+                        // Replace existing song in DB with new audio file & metadata
+                        val updatedSong = musicScanner.replaceExistingTrackWithDownload(
+                            existingTrackId = duplicateResult.matchedSong.id,
+                            newAudioFile = targetAudioFile,
+                            newTitle = enriched.title,
+                            newArtist = enriched.artist,
+                            newAlbum = enriched.album.ifBlank { "Downloads" },
+                            newArtworkFile = if (artworkFile.exists()) artworkFile else null,
+                            newLrcFile = if (lrcFile.exists()) lrcFile else null
+                        )
+
+                        exportToPublicMusicFolder(
+                            audioFile = targetAudioFile,
+                            title = enriched.title,
+                            artist = enriched.artist,
+                            album = enriched.album.ifBlank { "OfflineMusic" }
+                        )
+
+                        if (addToRecentlyDownloaded) {
+                            addToRecentlyDownloadedPlaylist(updatedSong.id)
+                        }
+
+                        _downloads.update { current ->
+                            val existing = current[downloadId] ?: return@update current
+                            current + (downloadId to existing.copy(status = DownloadStatus.COMPLETED, progress = 1.0f))
+                        }
+
+                        return@withContext updatedSong
+                    }
+                    DuplicateResolution.KEEP_BOTH_DIFFERENT -> {
+                        // Ensure filename is unique so it does not overwrite the existing song on disk
+                        val existingPath = duplicateResult.matchedSong.uri.path
+                        if (existingPath != null && File(existingPath).canonicalPath == targetAudioFile.canonicalPath) {
+                            val uniqueFile = File(targetDir, "${safeFilename}_${System.currentTimeMillis()}.${formatExt}")
+                            if (targetAudioFile.renameTo(uniqueFile)) {
+                                targetAudioFile = uniqueFile
+                            }
+                        }
+                        // Continue to register as a separate track below
+                    }
+                }
+            }
+        }
+
         // Register in Central Library without Duplicates
         val registeredSong = musicScanner.registerDownloadedTrack(
             audioFile = targetAudioFile,
@@ -436,6 +732,23 @@ class DownloadManager private constructor(private val context: Context) {
             val existing = current[downloadId] ?: return@update current
             current + (downloadId to existing.copy(status = DownloadStatus.COMPLETED, progress = 1.0f))
         }
+
+        downloadDao.insertOrUpdate(
+            DownloadRecordEntity(
+                id = downloadId,
+                title = enriched.title,
+                artist = enriched.artist,
+                source = track.source.name,
+                sourceUrl = track.sourceUrl,
+                thumbnailUrl = enriched.artworkUrl ?: track.thumbnailUrl,
+                status = "COMPLETED",
+                progress = 1.0f,
+                filePath = targetAudioFile.absolutePath,
+                fileSizeBytes = targetAudioFile.length(),
+                durationMs = track.durationMs,
+                completedTimestamp = System.currentTimeMillis()
+            )
+        )
 
         registeredSong
     }
@@ -524,10 +837,22 @@ class DownloadManager private constructor(private val context: Context) {
 
     private fun checkAndStopServiceIfIdle() {
         val hasActive = _downloads.value.values.any {
-            it.status == DownloadStatus.QUEUED || it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.ENRICHING
+            it.status == DownloadStatus.QUEUED || it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.ENRICHING || it.status == DownloadStatus.DUPLICATE_FOUND
         }
         if (!hasActive) {
             DownloadService.stopService(context)
+        }
+    }
+
+    fun deleteDownloadRecord(id: String) {
+        scope.launch(Dispatchers.IO) {
+            downloadDao.deleteById(id)
+        }
+    }
+
+    fun clearDownloadHistory() {
+        scope.launch(Dispatchers.IO) {
+            downloadDao.clearAll()
         }
     }
 

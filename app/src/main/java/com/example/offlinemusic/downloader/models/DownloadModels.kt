@@ -32,10 +32,34 @@ enum class DownloadStatus {
     QUEUED,
     DOWNLOADING,
     ENRICHING,
+    DUPLICATE_FOUND,
     COMPLETED,
     FAILED,
     CANCELLED
 }
+
+enum class DuplicateResolution {
+    KEEP_BOTH_DIFFERENT,
+    REPLACE_EXISTING,
+    DISCARD
+}
+
+data class DuplicatePromptData(
+    val downloadId: String,
+    val downloadedTrack: DownloadableTrack,
+    val downloadedAudioFile: java.io.File,
+    val downloadedFormat: String,
+    val downloadedSizeBytes: Long,
+    val downloadedDurationMs: Long,
+    val downloadedArtworkFile: java.io.File?,
+    val downloadedLrcFile: java.io.File?,
+    val enrichedTitle: String,
+    val enrichedArtist: String,
+    val enrichedAlbum: String,
+    val existingSong: com.example.offlinemusic.data.model.Song,
+    val matchPercentage: Int,
+    val continuation: kotlinx.coroutines.CompletableDeferred<DuplicateResolution>
+)
 
 data class DownloadProgress(
     val downloadId: String,
