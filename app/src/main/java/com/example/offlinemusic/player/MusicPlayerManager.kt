@@ -47,6 +47,22 @@ class MusicPlayerManager private constructor(private val context: Context) {
     private val _queue = MutableStateFlow<List<Song>>(emptyList())
     val queue: StateFlow<List<Song>> = _queue.asStateFlow()
 
+    private val _userQueuedSongIds = MutableStateFlow<Set<String>>(emptySet())
+    val userQueuedSongIds: StateFlow<Set<String>> = _userQueuedSongIds.asStateFlow()
+
+    data class QueueEntry(
+        val instanceId: String = java.util.UUID.randomUUID().toString(),
+        val song: Song,
+        val isUserQueued: Boolean
+    )
+
+    private val internalQueue = mutableListOf<QueueEntry>()
+    private var lastPlayedIndex: Int = -1
+
+    private fun updateUserQueuedIds() {
+        _userQueuedSongIds.value = internalQueue.filter { it.isUserQueued }.map { it.song.id }.toSet()
+    }
+
     private val _isShuffleEnabled = MutableStateFlow(false)
     val isShuffleEnabled: StateFlow<Boolean> = _isShuffleEnabled.asStateFlow()
 
@@ -101,6 +117,25 @@ class MusicPlayerManager private constructor(private val context: Context) {
                         _currentSong.value = song
                         _durationMs.value = if (duration > 0) duration else (song?.durationMs ?: 0L)
                         _currentPositionMs.value = currentPosition.coerceAtLeast(0L)
+                    }
+
+                    val count = mediaItemCount
+                    if (count > 0 && _queue.value.isEmpty()) {
+                        val items = mutableListOf<Song>()
+                        for (i in 0 until count) {
+                            val resolved = resolveSong(getMediaItemAt(i))
+                            if (resolved != null) {
+                                items.add(resolved)
+                                songMap[resolved.id] = resolved
+                            }
+                        }
+                        if (items.isNotEmpty()) {
+                            internalQueue.clear()
+                            items.forEach { internalQueue.add(QueueEntry(song = it, isUserQueued = false)) }
+                            _queue.value = items
+                            updateUserQueuedIds()
+                            lastPlayedIndex = currentMediaItemIndex
+                        }
                     }
                 }
                 _isConnected.value = true
@@ -187,6 +222,46 @@ class MusicPlayerManager private constructor(private val context: Context) {
                 return
             }
 
+            val controller = mediaController
+            val newIndex = controller?.currentMediaItemIndex ?: -1
+
+            // 1. Shuffle redirection check:
+            // If shuffle mode is enabled and reason is AUTO, ExoPlayer might have jumped
+            // according to its internal shuffle order instead of playing our queued song.
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && _isShuffleEnabled.value) {
+                val nextExpectedQueued = lastPlayedIndex + 1
+                if (nextExpectedQueued in internalQueue.indices && internalQueue[nextExpectedQueued].isUserQueued) {
+                    if (newIndex != nextExpectedQueued) {
+                        controller?.seekTo(nextExpectedQueued, 0L)
+                        controller?.play()
+                        return
+                    }
+                }
+            }
+
+            // 2. Consume finished queued songs if playback moved forward:
+            if (lastPlayedIndex in internalQueue.indices && lastPlayedIndex < newIndex) {
+                val prevEntry = internalQueue[lastPlayedIndex]
+                if (prevEntry.isUserQueued) {
+                    internalQueue.removeAt(lastPlayedIndex)
+                    controller?.removeMediaItem(lastPlayedIndex)
+                    _queue.value = internalQueue.map { it.song }
+                    updateUserQueuedIds()
+                    val adjustedCurrentIndex = controller?.currentMediaItemIndex ?: (newIndex - 1)
+                    lastPlayedIndex = adjustedCurrentIndex
+                    activeTrackId = mediaItem?.mediaId
+                    if (_isPlaying.value) {
+                        trackPlayStartTimeMs = System.currentTimeMillis()
+                    }
+                    val song = resolveSong(mediaItem)
+                    _currentSong.value = song
+                    _durationMs.value = song?.durationMs ?: (controller?.duration?.coerceAtLeast(0L) ?: 0L)
+                    _currentPositionMs.value = 0L
+                    return
+                }
+            }
+
+            lastPlayedIndex = newIndex
             activeTrackId = mediaItem?.mediaId
             if (_isPlaying.value) {
                 trackPlayStartTimeMs = System.currentTimeMillis()
@@ -194,7 +269,7 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
             val song = resolveSong(mediaItem)
             _currentSong.value = song
-            _durationMs.value = song?.durationMs ?: (mediaController?.duration?.coerceAtLeast(0L) ?: 0L)
+            _durationMs.value = song?.durationMs ?: (controller?.duration?.coerceAtLeast(0L) ?: 0L)
             _currentPositionMs.value = 0L
         }
 
@@ -213,6 +288,14 @@ class MusicPlayerManager private constructor(private val context: Context) {
                 _currentPositionMs.value = 0L
                 if (isEndOfTrackTimer) {
                     cancelSleepTimer()
+                }
+                val controller = mediaController
+                val curr = controller?.currentMediaItemIndex ?: -1
+                if (curr in internalQueue.indices && internalQueue[curr].isUserQueued) {
+                    internalQueue.removeAt(curr)
+                    controller?.removeMediaItem(curr)
+                    _queue.value = internalQueue.map { it.song }
+                    updateUserQueuedIds()
                 }
             }
         }
@@ -257,10 +340,15 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
         songMap.clear()
         queueToUse.forEach { songMap[it.id] = it }
+
+        internalQueue.clear()
+        queueToUse.forEach { internalQueue.add(QueueEntry(song = it, isUserQueued = false)) }
         _queue.value = queueToUse
+        updateUserQueuedIds()
 
         val mediaItems = queueToUse.map { it.toMediaItem() }
         val startIndex = queueToUse.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+        lastPlayedIndex = startIndex
 
         controller.setMediaItems(mediaItems, startIndex, 0L)
         controller.prepare()
@@ -271,12 +359,63 @@ class MusicPlayerManager private constructor(private val context: Context) {
         _currentPositionMs.value = 0L
     }
 
+    fun playStreamingTrack(
+        trackId: String,
+        title: String,
+        artist: String,
+        streamUrl: String,
+        durationMs: Long,
+        thumbnailUrl: String?
+    ) {
+        val streamSong = Song(
+            id = "stream_$trackId",
+            title = title,
+            artist = artist,
+            album = "Online Stream",
+            albumFolder = "Streams",
+            year = null,
+            genre = "Stream",
+            durationMs = durationMs,
+            sizeBytes = 0L,
+            dateModified = System.currentTimeMillis(),
+            uri = Uri.parse(streamUrl),
+            relativePath = "",
+            artworkUri = if (!thumbnailUrl.isNullOrBlank()) Uri.parse(thumbnailUrl) else null
+        )
+        playSong(streamSong, listOf(streamSong))
+        android.widget.Toast.makeText(context, "Streaming \"$title\"...", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    fun onStreamDownloadCompleted(streamId: String, localSong: Song) {
+        songMap[localSong.id] = localSong
+
+        var updatedQueue = false
+        for (i in internalQueue.indices) {
+            if (internalQueue[i].song.id == streamId) {
+                internalQueue[i] = internalQueue[i].copy(song = localSong)
+                updatedQueue = true
+            }
+        }
+        if (updatedQueue) {
+            _queue.value = internalQueue.map { it.song }
+        }
+
+        if (_currentSong.value?.id == streamId) {
+            _currentSong.value = localSong
+        }
+    }
+
     fun updateSongMetadata(updatedSong: Song) {
         songMap[updatedSong.id] = updatedSong
         if (_currentSong.value?.id == updatedSong.id) {
             _currentSong.value = updatedSong
         }
-        _queue.value = _queue.value.map { if (it.id == updatedSong.id) updatedSong else it }
+        for (i in internalQueue.indices) {
+            if (internalQueue[i].song.id == updatedSong.id) {
+                internalQueue[i] = internalQueue[i].copy(song = updatedSong)
+            }
+        }
+        _queue.value = internalQueue.map { it.song }
         val controller = mediaController
         if (controller != null && controller.currentMediaItem?.mediaId == updatedSong.id) {
             val currIndex = controller.currentMediaItemIndex
@@ -288,25 +427,110 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
     fun addToQueue(song: Song) {
         val controller = mediaController
-        val currentQ = _queue.value.toMutableList()
-        currentQ.add(song)
+        if (controller == null || _currentSong.value == null || internalQueue.isEmpty()) {
+            playSong(song, listOf(song))
+            android.widget.Toast.makeText(context, "\"${song.title}\" playing now", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
         songMap[song.id] = song
-        _queue.value = currentQ
-        if (controller != null) {
-            controller.addMediaItem(song.toMediaItem())
-            if (_currentSong.value == null) {
-                playSong(song, currentQ)
+        internalQueue.add(QueueEntry(song = song, isUserQueued = false))
+        _queue.value = internalQueue.map { it.song }
+        updateUserQueuedIds()
+
+        controller.addMediaItem(song.toMediaItem())
+        android.widget.Toast.makeText(context, "\"${song.title}\" added to bottom of queue", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    fun playNext(song: Song) {
+        val controller = mediaController
+        if (controller == null || _currentSong.value == null || internalQueue.isEmpty()) {
+            playSong(song, listOf(song))
+            android.widget.Toast.makeText(context, "\"${song.title}\" playing now", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        songMap[song.id] = song
+        val currentIndex = controller.currentMediaItemIndex
+        val baseIndex = if (currentIndex in internalQueue.indices) currentIndex else internalQueue.lastIndex
+
+        var insertIndex = baseIndex + 1
+        while (insertIndex < internalQueue.size && internalQueue[insertIndex].isUserQueued) {
+            insertIndex++
+        }
+        insertIndex = insertIndex.coerceIn(0, internalQueue.size)
+
+        internalQueue.add(insertIndex, QueueEntry(song = song, isUserQueued = true))
+        _queue.value = internalQueue.map { it.song }
+        updateUserQueuedIds()
+
+        controller.addMediaItem(insertIndex, song.toMediaItem())
+        android.widget.Toast.makeText(context, "\"${song.title}\" will play next", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    fun removeFromQueue(index: Int) {
+        val controller = mediaController ?: return
+        if (index in internalQueue.indices) {
+            val isCurrent = index == controller.currentMediaItemIndex
+            internalQueue.removeAt(index)
+            controller.removeMediaItem(index)
+            _queue.value = internalQueue.map { it.song }
+            updateUserQueuedIds()
+            if (isCurrent) {
+                if (internalQueue.isEmpty()) {
+                    stopPlayback()
+                } else {
+                    skipToNext()
+                }
             }
         }
     }
 
+    fun clearQueue() {
+        val controller = mediaController ?: return
+        val currIdx = controller.currentMediaItemIndex
+        for (i in internalQueue.lastIndex downTo 0) {
+            if (i != currIdx && internalQueue[i].isUserQueued) {
+                internalQueue.removeAt(i)
+                controller.removeMediaItem(i)
+            }
+        }
+        _queue.value = internalQueue.map { it.song }
+        updateUserQueuedIds()
+    }
+
     fun playSongAtIndex(index: Int) {
         val controller = mediaController ?: return
-        val currentQ = _queue.value
-        if (index in currentQ.indices) {
+        if (index in internalQueue.indices) {
+            val currIdx = controller.currentMediaItemIndex
+            if (index > currIdx) {
+                var target = index
+                var checkIdx = currIdx
+                while (checkIdx < target) {
+                    if (checkIdx in internalQueue.indices && internalQueue[checkIdx].isUserQueued) {
+                        internalQueue.removeAt(checkIdx)
+                        controller.removeMediaItem(checkIdx)
+                        target--
+                    } else {
+                        checkIdx++
+                    }
+                }
+                _queue.value = internalQueue.map { it.song }
+                updateUserQueuedIds()
+                lastPlayedIndex = target
+                controller.seekTo(target, 0L)
+                controller.play()
+                val song = internalQueue[target].song
+                _currentSong.value = song
+                _durationMs.value = song.durationMs
+                _currentPositionMs.value = 0L
+                return
+            }
+
+            lastPlayedIndex = index
             controller.seekTo(index, 0L)
             controller.play()
-            val song = currentQ[index]
+            val song = internalQueue[index].song
             _currentSong.value = song
             _durationMs.value = song.durationMs
             _currentPositionMs.value = 0L
@@ -333,6 +557,13 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
     fun skipToNext() {
         val controller = mediaController ?: return
+        val currIdx = controller.currentMediaItemIndex
+        val nextQueuedIndex = currIdx + 1
+        if (nextQueuedIndex in internalQueue.indices && internalQueue[nextQueuedIndex].isUserQueued) {
+            controller.seekTo(nextQueuedIndex, 0L)
+            controller.play()
+            return
+        }
         if (controller.hasNextMediaItem()) {
             controller.seekToNextMediaItem()
             controller.play()
@@ -429,20 +660,20 @@ class MusicPlayerManager private constructor(private val context: Context) {
     }
 
     fun removeTrackFromPlayer(trackId: String) {
-        val currentQ = _queue.value.toMutableList()
-        val index = currentQ.indexOfFirst { it.id == trackId }
+        val index = internalQueue.indexOfFirst { it.song.id == trackId }
         if (index != -1) {
             val wasPlayingDeletedSong = _currentSong.value?.id == trackId
-            currentQ.removeAt(index)
+            internalQueue.removeAt(index)
             songMap.remove(trackId)
-            _queue.value = currentQ
+            _queue.value = internalQueue.map { it.song }
+            updateUserQueuedIds()
             val controller = mediaController
             if (controller != null && index < controller.mediaItemCount) {
                 try {
                     controller.removeMediaItem(index)
                 } catch (_: Exception) {}
             }
-            if (currentQ.isEmpty()) {
+            if (internalQueue.isEmpty()) {
                 stopPlayback()
             } else if (wasPlayingDeletedSong) {
                 skipToNext()
@@ -455,10 +686,14 @@ class MusicPlayerManager private constructor(private val context: Context) {
         val controller = mediaController ?: return
         controller.stop()
         controller.clearMediaItems()
+        internalQueue.clear()
+        _queue.value = emptyList()
+        updateUserQueuedIds()
         _currentSong.value = null
         _isPlaying.value = false
         _currentPositionMs.value = 0L
         _durationMs.value = 0L
+        lastPlayedIndex = -1
         stopProgressTracker()
     }
 

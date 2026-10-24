@@ -183,6 +183,24 @@ class DownloadManager private constructor(private val context: Context) {
     }
 
     /**
+     * Resolve direct audio stream URL for immediate playback while downloading
+     */
+    suspend fun getStreamUrlForTrack(track: DownloadableTrack): String? = withContext(Dispatchers.IO) {
+        if (track.source == DownloadSource.YOUTUBE) {
+            val videoIdOrUrl = track.sourceUrl.ifBlank { track.id }
+            val res = YouTubeDownloader.getAudioStreamUrl(videoIdOrUrl)
+            if (res.isSuccess) return@withContext res.getOrNull()
+        }
+        // Fallback or Lucida track: search YouTube candidate
+        val ytCandidate = YouTubeDownloader.search("${track.artist} - ${track.title}", limit = 1).firstOrNull()
+        if (ytCandidate != null) {
+            val res = YouTubeDownloader.getAudioStreamUrl(ytCandidate.sourceUrl.ifBlank { ytCandidate.id })
+            if (res.isSuccess) return@withContext res.getOrNull()
+        }
+        return@withContext null
+    }
+
+    /**
      * Download an individual song
      */
     fun downloadTrack(track: DownloadableTrack) {
@@ -673,6 +691,8 @@ class DownloadManager private constructor(private val context: Context) {
                             addToRecentlyDownloadedPlaylist(updatedSong.id)
                         }
 
+                        com.example.offlinemusic.player.MusicPlayerManager.getInstance(context).onStreamDownloadCompleted("stream_${track.id}", updatedSong)
+
                         _downloads.update { current ->
                             val existing = current[downloadId] ?: return@update current
                             current + (downloadId to existing.copy(status = DownloadStatus.COMPLETED, progress = 1.0f))
@@ -727,6 +747,8 @@ class DownloadManager private constructor(private val context: Context) {
         if (addToRecentlyDownloaded) {
             addToRecentlyDownloadedPlaylist(registeredSong.id)
         }
+
+        com.example.offlinemusic.player.MusicPlayerManager.getInstance(context).onStreamDownloadCompleted("stream_${track.id}", registeredSong)
 
         _downloads.update { current ->
             val existing = current[downloadId] ?: return@update current

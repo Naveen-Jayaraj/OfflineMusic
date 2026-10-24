@@ -36,6 +36,7 @@ import com.example.offlinemusic.downloader.models.SyncedLyrics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -550,8 +551,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         triggerOnlineSearch(_searchQuery.value)
     }
 
-    fun downloadTrack(track: DownloadableTrack) {
+    fun downloadTrack(track: DownloadableTrack, startStreaming: Boolean = true) {
         downloadManager.downloadTrack(track)
+        if (startStreaming) {
+            streamTrack(track)
+        }
+    }
+
+    fun streamTrack(track: DownloadableTrack) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val streamUrl = downloadManager.getStreamUrlForTrack(track)
+            if (!streamUrl.isNullOrBlank()) {
+                withContext(Dispatchers.Main) {
+                    playerManager.playStreamingTrack(
+                        trackId = track.id,
+                        title = track.title,
+                        artist = track.artist,
+                        streamUrl = streamUrl,
+                        durationMs = track.durationMs,
+                        thumbnailUrl = track.thumbnailUrl
+                    )
+                }
+            }
+        }
     }
 
     fun downloadSpotifyPlaylist(playlist: SpotifyPlaylistInfo) {
@@ -991,6 +1013,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addToQueue(song: Song) {
         playerManager.addToQueue(song)
+    }
+
+    fun playNext(song: Song) {
+        playerManager.playNext(song)
     }
 
     fun playPlaylist(playlist: Playlist) {

@@ -94,6 +94,7 @@ fun MainMusicScreen(
     val isShuffleEnabled by viewModel.playerManager.isShuffleEnabled.collectAsState()
     val repeatMode by viewModel.playerManager.repeatMode.collectAsState()
     val queue by viewModel.playerManager.queue.collectAsState()
+    val userQueuedSongIds by viewModel.playerManager.userQueuedSongIds.collectAsState()
 
     // System Back button handling
     BackHandler(enabled = isFullPlayerVisible) {
@@ -142,6 +143,7 @@ fun MainMusicScreen(
                                 onEditDescriptionClick = { newDesc -> viewModel.updatePlaylistDescription(playlist.id, newDesc) },
                                 onChangeCoverClick = { newArtUri -> viewModel.updatePlaylistArtwork(playlist.id, newArtUri) },
                                 onAddToAnotherPlaylistClick = { song -> songForAddToPlaylist = song },
+                                onPlayNextClick = { song -> viewModel.playNext(song) },
                                 onAddToQueueClick = { song -> viewModel.addToQueue(song) },
                                 onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
                                 onDeleteSongClick = { song -> viewModel.deleteSong(song) },
@@ -164,6 +166,7 @@ fun MainMusicScreen(
                                 onShuffleAllClick = { viewModel.shuffleAlbum(album) },
                                 onEditAlbumName = { newName -> viewModel.updateAlbumName(album.id, newName) },
                                 onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
+                                onPlayNextClick = { song -> viewModel.playNext(song) },
                                 onAddToQueueClick = { song -> viewModel.addToQueue(song) },
                                 onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
                                 onDeleteSongClick = { song -> viewModel.deleteSong(song) },
@@ -185,6 +188,7 @@ fun MainMusicScreen(
                                 onShuffleAllClick = { viewModel.shuffleArtist(artistProfile) },
                                 onAlbumClick = { album -> viewModel.openAlbumDetail(album) },
                                 onAddToPlaylistClick = { song -> songForAddToPlaylist = song },
+                                onPlayNextClick = { song -> viewModel.playNext(song) },
                                 onAddToQueueClick = { song -> viewModel.addToQueue(song) },
                                 onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
                                 onDeleteSongClick = { song -> viewModel.deleteSong(song) }
@@ -223,13 +227,7 @@ fun MainMusicScreen(
                                     onNavigateToLibrary = { viewModel.selectTab(BottomNavTab.LIBRARY) },
                                     onRescanClick = { viewModel.rescan() },
                                     onChangeFolderClick = onPickFolderClick,
-                                    onReviewClick = { viewModel.triggerManualReview() },
-                                    onDownloadsClick = { viewModel.openDownloadsScreen() },
-                                    activeDownloadsCount = downloads.values.count {
-                                        it.status == com.example.offlinemusic.downloader.models.DownloadStatus.QUEUED ||
-                                        it.status == com.example.offlinemusic.downloader.models.DownloadStatus.DOWNLOADING ||
-                                        it.status == com.example.offlinemusic.downloader.models.DownloadStatus.ENRICHING
-                                    }
+                                    onReviewClick = { viewModel.triggerManualReview() }
                                 )
                             }
                             BottomNavTab.SEARCH -> {
@@ -255,6 +253,7 @@ fun MainMusicScreen(
                                     onAlbumClick = { viewModel.openAlbumDetail(it) },
                                     onArtistClick = { viewModel.openArtistProfile(it) },
                                     onSongAddToPlaylistClick = { songForAddToPlaylist = it },
+                                    onPlayNextClick = { viewModel.playNext(it) },
                                     onAddToQueueClick = { viewModel.addToQueue(it) },
                                     onEditSongClick = { song -> viewModel.openMetadataEditor(song) },
                                     onDeleteSongClick = { song -> viewModel.deleteSong(song) },
@@ -327,8 +326,7 @@ fun MainMusicScreen(
                         onPlayPauseClick = { viewModel.playerManager.togglePlayPause() },
                         onSkipNextClick = { viewModel.playerManager.skipToNext() },
                         onStopClick = { viewModel.playerManager.stopPlayback() },
-                        onExpandClick = { viewModel.showFullPlayer() },
-                        onArtistClick = { viewModel.handleArtistClick(it) }
+                        onExpandClick = { viewModel.showFullPlayer() }
                     )
                 }
 
@@ -463,6 +461,7 @@ fun MainMusicScreen(
                 isShuffleEnabled = isShuffleEnabled,
                 repeatMode = repeatMode,
                 queue = queue,
+                userQueuedSongIds = userQueuedSongIds,
                 isLiked = currentSong?.let { it.id in likedSongIds } ?: false,
                 onToggleLike = { currentSong?.let { viewModel.toggleLikeSong(it.id) } },
                 onAddToPlaylistClick = { songForAddToPlaylist = currentSong },
@@ -474,6 +473,8 @@ fun MainMusicScreen(
                 onToggleRepeat = { viewModel.playerManager.toggleRepeat() },
                 onStopClick = { viewModel.playerManager.stopPlayback() },
                 onPlayQueueIndex = { viewModel.playerManager.playSongAtIndex(it) },
+                onRemoveQueueIndex = { viewModel.playerManager.removeFromQueue(it) },
+                onClearQueue = { viewModel.playerManager.clearQueue() },
                 onDismiss = { viewModel.hideFullPlayer() },
                 onArtistClick = { artistName ->
                     viewModel.handleArtistClick(artistName)

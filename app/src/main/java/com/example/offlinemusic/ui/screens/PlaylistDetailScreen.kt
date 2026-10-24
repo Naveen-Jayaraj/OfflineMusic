@@ -88,6 +88,7 @@ fun PlaylistDetailScreen(
     onEditDescriptionClick: (String) -> Unit = {},
     onChangeCoverClick: (Uri?) -> Unit = {},
     onAddToAnotherPlaylistClick: (Song) -> Unit = {},
+    onPlayNextClick: (Song) -> Unit = {},
     onAddToQueueClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit = {},
     onDeleteSongClick: (Song) -> Unit = {},
@@ -717,6 +718,14 @@ fun PlaylistDetailScreen(
                                 onDismissRequest = { songMenuExpanded = false },
                                 modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                             ) {
+                                DropdownMenuItem(
+                                    text = { Text("Play Next", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                    onClick = {
+                                        songMenuExpanded = false
+                                        onPlayNextClick(song)
+                                    }
+                                )
                                 DropdownMenuItem(
                                     text = { Text("Add to Queue", color = MaterialTheme.colorScheme.onSurface) },
                                     leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },

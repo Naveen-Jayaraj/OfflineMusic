@@ -10,12 +10,19 @@ import android.os.Build
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.offlinemusic.MainActivity
 import com.example.offlinemusic.R
+import okhttp3.ConnectionPool
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 class MusicService : MediaSessionService() {
 
@@ -43,7 +50,47 @@ class MusicService : MediaSessionService() {
             .setUsage(C.USAGE_MEDIA)
             .build()
 
+        // High-performance streaming HTTP client with connection pooling, keep-alive and Chrome UA
+        val streamingHttpClient = OkHttpClient.Builder()
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .retryOnConnectionFailure(true)
+            .connectionPool(ConnectionPool(8, 2, TimeUnit.MINUTES))
+            .addInterceptor { chain ->
+                val original = chain.request()
+                val requestWithHeaders = original.newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                    .header("Accept", "*/*")
+                    .header("Accept-Encoding", "identity")
+                    .build()
+                chain.proceed(requestWithHeaders)
+            }
+            .build()
+
+        val okHttpDataSourceFactory = OkHttpDataSource.Factory(streamingHttpClient)
+        val dataSourceFactory = DefaultDataSource.Factory(this, okHttpDataSourceFactory)
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+
+        // Aggressive, ultra-low latency load control:
+        // - Starts playback in 500ms instead of default 2500ms for near-instant audio start
+        // - Buffers up to 120s forward so streams never stutter or run dry
+        // - Resumes in 1000ms after rebuffering
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 30_000,
+                /* maxBufferMs = */ 120_000,
+                /* bufferForPlaybackMs = */ 500,
+                /* bufferForPlaybackAfterRebufferMs = */ 1_000
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .setBackBuffer(20_000, true)
+            .build()
+
         player = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, true) // Handles audio focus (phone calls, other apps)
             .setHandleAudioBecomingNoisy(true) // Pauses on headphone unplug
             .setWakeMode(C.WAKE_MODE_LOCAL) // Keeps CPU awake for screen-off & background playback

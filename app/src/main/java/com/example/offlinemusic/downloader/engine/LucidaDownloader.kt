@@ -283,12 +283,12 @@ object LucidaDownloader {
                 val contentLength = body.contentLength()
 
                 targetFile.parentFile?.mkdirs()
-                FileOutputStream(targetFile).use { fos ->
-                    val buffer = ByteArray(8 * 1024)
+                java.io.BufferedOutputStream(FileOutputStream(targetFile), 64 * 1024).use { fos ->
+                    val buffer = ByteArray(64 * 1024)
                     var bytesRead: Int
                     var totalDownloaded = 0L
 
-                    body.byteStream().use { bis ->
+                    java.io.BufferedInputStream(body.byteStream(), 64 * 1024).use { bis ->
                         while (bis.read(buffer).also { bytesRead = it } != -1) {
                             fos.write(buffer, 0, bytesRead)
                             totalDownloaded += bytesRead

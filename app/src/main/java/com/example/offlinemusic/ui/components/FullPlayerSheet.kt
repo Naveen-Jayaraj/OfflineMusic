@@ -98,6 +98,7 @@ fun FullPlayerSheet(
     isShuffleEnabled: Boolean,
     repeatMode: Int,
     queue: List<Song>,
+    userQueuedSongIds: Set<String> = emptySet(),
     isLiked: Boolean,
     onToggleLike: () -> Unit,
     onAddToPlaylistClick: () -> Unit,
@@ -109,6 +110,8 @@ fun FullPlayerSheet(
     onToggleRepeat: () -> Unit,
     onStopClick: () -> Unit,
     onPlayQueueIndex: (Int) -> Unit,
+    onRemoveQueueIndex: (Int) -> Unit = {},
+    onClearQueue: () -> Unit = {},
     onDismiss: () -> Unit,
     onEditMetadataClick: () -> Unit = {},
     onArtistClick: ((String) -> Unit)? = null,
@@ -187,48 +190,43 @@ fun FullPlayerSheet(
                 )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Sleep Timer button in top corner
-                    IconButton(onClick = { showSleepTimerSheet = true }) {
-                        BadgedBox(
-                            badge = {
-                                if (sleepTimerRemainingMs != null && sleepTimerRemainingMs > 0) {
-                                    val totalSec = sleepTimerRemainingMs / 1000
-                                    val mins = totalSec / 60
-                                    Badge(
-                                        containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = MaterialTheme.colorScheme.onPrimary
-                                    ) {
-                                        Text(if (mins > 0) "${mins}m" else "${totalSec}s", fontSize = 9.sp)
-                                    }
-                                }
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Bedtime,
-                                contentDescription = "Sleep Timer",
-                                tint = if (sleepTimerRemainingMs != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-
-                    IconButton(onClick = onEditMetadataClick) {
+                    // Queue Button (prominently visible)
+                    IconButton(onClick = {
+                        isQueueVisible = !isQueueVisible
+                        if (isQueueVisible) isLyricsVisible = false
+                    }) {
                         Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "Edit Song Info",
-                            tint = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.size(22.dp)
+                            imageVector = Icons.Default.QueueMusic,
+                            contentDescription = "Queue",
+                            tint = if (isQueueVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
 
+                    // 3-dots Menu containing Edit Song Details, Sleep Timer, Add to Playlist, Delete Song
                     Box {
                         IconButton(onClick = { showPlayerMenu = true }) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "More Options",
-                                tint = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.size(22.dp)
-                            )
+                            BadgedBox(
+                                badge = {
+                                    if (sleepTimerRemainingMs != null && sleepTimerRemainingMs > 0) {
+                                        val totalSec = sleepTimerRemainingMs / 1000
+                                        val mins = totalSec / 60
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.primary,
+                                            contentColor = MaterialTheme.colorScheme.onPrimary
+                                        ) {
+                                            Text(if (mins > 0) "${mins}m" else "${totalSec}s", fontSize = 9.sp)
+                                        }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "More Options",
+                                    tint = MaterialTheme.colorScheme.onBackground,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
 
                         DropdownMenu(
@@ -237,8 +235,39 @@ fun FullPlayerSheet(
                             modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                         ) {
                             DropdownMenuItem(
+                                text = { Text("Edit Song Details", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                onClick = {
+                                    showPlayerMenu = false
+                                    onEditMetadataClick()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    val sleepText = if (sleepTimerRemainingMs != null && sleepTimerRemainingMs > 0) {
+                                        val totalSec = sleepTimerRemainingMs / 1000
+                                        val mins = totalSec / 60
+                                        "Sleep Timer (${if (mins > 0) "${mins}m" else "${totalSec}s"} left)"
+                                    } else {
+                                        "Sleep Timer"
+                                    }
+                                    Text(sleepText, color = MaterialTheme.colorScheme.onSurface)
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Bedtime,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                onClick = {
+                                    showPlayerMenu = false
+                                    showSleepTimerSheet = true
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Add to Playlist...", color = MaterialTheme.colorScheme.onSurface) },
-                                leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                 onClick = {
                                     showPlayerMenu = false
                                     onAddToPlaylistClick()
@@ -254,18 +283,6 @@ fun FullPlayerSheet(
                             )
                         }
                     }
-
-                    IconButton(onClick = {
-                        isQueueVisible = !isQueueVisible
-                        if (isQueueVisible) isLyricsVisible = false
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.QueueMusic,
-                            contentDescription = "Queue",
-                            tint = if (isQueueVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
                 }
             }
 
@@ -275,7 +292,10 @@ fun FullPlayerSheet(
                     queue = queue,
                     currentSongId = song.id,
                     isPlaying = isPlaying,
+                    userQueuedSongIds = userQueuedSongIds,
                     onSongClick = onPlayQueueIndex,
+                    onRemoveQueueIndex = onRemoveQueueIndex,
+                    onClearQueue = onClearQueue,
                     modifier = Modifier.weight(1f)
                 )
             } else if (isLyricsVisible) {
@@ -608,15 +628,37 @@ private fun QueueView(
     currentSongId: String,
     isPlaying: Boolean,
     onSongClick: (Int) -> Unit,
+    userQueuedSongIds: Set<String> = emptySet(),
+    onRemoveQueueIndex: (Int) -> Unit = {},
+    onClearQueue: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = "${queue.size} ${if (queue.size == 1) "Track" else "Tracks"} in Queue",
-            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 12.dp)
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "${queue.size} ${if (queue.size == 1) "Track" else "Tracks"} in Queue",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (userQueuedSongIds.isNotEmpty()) {
+                Text(
+                    text = "Clear Play Next",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable { onClearQueue() }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
+        }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -624,14 +666,26 @@ private fun QueueView(
         ) {
             itemsIndexed(queue) { index, itemSong ->
                 val isCurrent = itemSong.id == currentSongId
+                val isUserQueued = userQueuedSongIds.contains(itemSong.id)
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (isCurrent) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+                        .background(
+                            when {
+                                isCurrent -> MaterialTheme.colorScheme.surfaceVariant
+                                isUserQueued -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                else -> Color.Transparent
+                            }
+                        )
                         .border(
                             1.dp,
-                            if (isCurrent) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                            when {
+                                isCurrent -> MaterialTheme.colorScheme.outline
+                                isUserQueued -> MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+                                else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                            },
                             RoundedCornerShape(10.dp)
                         )
                         .clickable { onSongClick(index) }
@@ -654,15 +708,39 @@ private fun QueueView(
                     Spacer(modifier = Modifier.width(10.dp))
 
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = itemSong.title,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = itemSong.title,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = if (isCurrent || isUserQueued) FontWeight.Bold else FontWeight.Medium
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+
+                            if (isUserQueued && !isCurrent) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(start = 6.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "PLAY NEXT",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 9.sp,
+                                            letterSpacing = 0.5.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+
                         Text(
                             text = itemSong.artist,
                             style = MaterialTheme.typography.bodySmall,
@@ -674,6 +752,18 @@ private fun QueueView(
 
                     if (isCurrent && isPlaying) {
                         EqualizerBars()
+                    } else if (isUserQueued && !isCurrent) {
+                        IconButton(
+                            onClick = { onRemoveQueueIndex(index) },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Remove from Queue",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     } else {
                         Text(
                             text = itemSong.formattedDuration,

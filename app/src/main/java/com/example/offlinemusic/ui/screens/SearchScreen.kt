@@ -95,6 +95,7 @@ fun SearchScreen(
     onAlbumClick: (Album) -> Unit,
     onArtistClick: (String) -> Unit,
     onSongAddToPlaylistClick: (Song) -> Unit,
+    onPlayNextClick: (Song) -> Unit = {},
     onAddToQueueClick: (Song) -> Unit = {},
     onEditSongClick: (Song) -> Unit,
     onDeleteSongClick: (Song) -> Unit = {},
@@ -567,6 +568,14 @@ fun SearchScreen(
                                     modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                                 ) {
                                     DropdownMenuItem(
+                                        text = { Text("Play Next", color = MaterialTheme.colorScheme.onSurface) },
+                                        leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onPlayNextClick(song)
+                                        }
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text("Add to Queue", color = MaterialTheme.colorScheme.onSurface) },
                                         leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                         onClick = {
@@ -771,9 +780,19 @@ fun SearchScreen(
                     if (onlineSearchResults.isNotEmpty()) {
                         items(onlineSearchResults, key = { "${it.source}_${it.id}" }) { onlineTrack ->
                             val progress = downloads[onlineTrack.id]
+                            val isStreamingCurrent = currentSong?.id == "stream_${onlineTrack.id}" || currentSong?.id == onlineTrack.id
                             DownloadableTrackItem(
                                 track = onlineTrack,
                                 downloadProgress = progress,
+                                isCurrent = isStreamingCurrent,
+                                isPlaying = isPlaying,
+                                onTrackClick = {
+                                    if (progress?.status == DownloadStatus.DUPLICATE_FOUND) {
+                                        onReopenDuplicate(onlineTrack.id)
+                                    } else {
+                                        onDownloadTrack(onlineTrack)
+                                    }
+                                },
                                 onDownload = {
                                     if (progress?.status == DownloadStatus.DUPLICATE_FOUND) {
                                         onReopenDuplicate(onlineTrack.id)

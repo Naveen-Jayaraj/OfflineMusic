@@ -64,6 +64,7 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
     implementation(libs.media3.ui)
+    implementation("androidx.media3:media3-datasource-okhttp:1.2.1")
 
     // Image loading for album art
     implementation(libs.coil.compose)

@@ -69,8 +69,6 @@ fun HomeScreen(
     onRescanClick: () -> Unit,
     onChangeFolderClick: () -> Unit,
     onReviewClick: () -> Unit,
-    onDownloadsClick: () -> Unit = {},
-    activeDownloadsCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     // Dynamic time-based greeting
@@ -169,24 +167,6 @@ fun HomeScreen(
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
-                            }
-                        }
-
-                        IconButton(onClick = onDownloadsClick) {
-                            if (activeDownloadsCount > 0) {
-                                BadgedBox(badge = { Badge { Text("$activeDownloadsCount") } }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Download,
-                                        contentDescription = "Downloads",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Download,
-                                    contentDescription = "Downloads",
-                                    tint = MaterialTheme.colorScheme.onBackground
-                                )
                             }
                         }
 
