@@ -48,11 +48,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,9 +75,11 @@ import com.example.offlinemusic.downloader.models.DownloadProgress
 import com.example.offlinemusic.downloader.models.DownloadStatus
 import com.example.offlinemusic.downloader.models.DownloadableTrack
 import com.example.offlinemusic.downloader.models.SpotifyPlaylistInfo
+import com.example.offlinemusic.ui.LucidaSearchIssue
 import com.example.offlinemusic.ui.SearchResults
 import com.example.offlinemusic.ui.components.ArtworkView
 import com.example.offlinemusic.ui.components.DownloadableTrackItem
+import com.example.offlinemusic.ui.components.LucidaVerificationDialog
 import com.example.offlinemusic.ui.components.SpotifyPlaylistPreviewCard
 
 @OptIn(ExperimentalFoundationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -106,6 +110,8 @@ fun SearchScreen(
     onDownloadSpotifyPlaylist: (SpotifyPlaylistInfo) -> Unit = {},
     onlineSearchResults: List<DownloadableTrack> = emptyList(),
     isOnlineSearching: Boolean = false,
+    lucidaSearchIssue: LucidaSearchIssue? = null,
+    onLucidaVerified: (query: String, searchPage: String) -> Unit = { _, _ -> },
     downloads: Map<String, DownloadProgress> = emptyMap(),
     onDownloadTrack: (DownloadableTrack) -> Unit = {},
     onCancelDownload: (String) -> Unit = {},
@@ -116,6 +122,7 @@ fun SearchScreen(
 ) {
     val focusManager = LocalFocusManager.current
     var songToDelete by remember { mutableStateOf<Song?>(null) }
+    var showLucidaVerification by rememberSaveable(searchQuery) { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -777,6 +784,34 @@ fun SearchScreen(
                         }
                     }
 
+                    if (lucidaSearchIssue != null) {
+                        item {
+                            val needsVerification = lucidaSearchIssue == LucidaSearchIssue.VERIFICATION_REQUIRED
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (needsVerification) "Lucida requires a browser check."
+                                        else "Couldn't load Lucida results.",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                TextButton(onClick = {
+                                    if (needsVerification) {
+                                        focusManager.clearFocus()
+                                        showLucidaVerification = true
+                                    } else {
+                                        onSearchQueryChange(searchQuery)
+                                    }
+                                }) {
+                                    Text(if (needsVerification) "Verify Lucida" else "Retry")
+                                }
+                            }
+                        }
+                    }
+
                     if (onlineSearchResults.isNotEmpty()) {
                         items(onlineSearchResults, key = { "${it.source}_${it.id}" }) { onlineTrack ->
                             val progress = downloads[onlineTrack.id]
@@ -804,7 +839,7 @@ fun SearchScreen(
                                 onRetry = { onRetryDownload(onlineTrack.id, onlineTrack) }
                             )
                         }
-                    } else if (!isOnlineSearching && searchResults.songs.isEmpty() && searchResults.artists.isEmpty() && searchResults.playlists.isEmpty() && searchResults.albums.isEmpty()) {
+                    } else if (lucidaSearchIssue == null && !isOnlineSearching && searchResults.songs.isEmpty() && searchResults.artists.isEmpty() && searchResults.playlists.isEmpty() && searchResults.albums.isEmpty()) {
                         item {
                             Box(
                                 modifier = Modifier
@@ -834,6 +869,17 @@ fun SearchScreen(
                     Spacer(modifier = Modifier.height(100.dp))
                 }
             }
+        }
+
+        if (showLucidaVerification && lucidaSearchIssue == LucidaSearchIssue.VERIFICATION_REQUIRED) {
+            LucidaVerificationDialog(
+                query = searchQuery,
+                onDismiss = { showLucidaVerification = false },
+                onVerified = { page ->
+                    showLucidaVerification = false
+                    onLucidaVerified(searchQuery, page)
+                }
+            )
         }
 
         if (songToDelete != null) {

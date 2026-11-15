@@ -1,148 +1,172 @@
 package com.example.offlinemusic.downloader.engine
 
+import android.content.Context
 import android.util.Base64
+import android.webkit.CookieManager
+import android.webkit.WebSettings
 import com.example.offlinemusic.downloader.models.DownloadSource
 import com.example.offlinemusic.downloader.models.DownloadableTrack
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
+import com.google.gson.JsonParseException
+import com.google.gson.JsonParser
+import com.google.gson.JsonPrimitive
+import com.google.gson.stream.JsonReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
+import okhttp3.Response
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URLEncoder
+import java.io.IOException
+import java.io.StringReader
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
+import kotlin.coroutines.resume
 
-object LucidaDownloader {
+internal class LucidaDownloader(context: Context) {
 
-    private const val BASE_URL = "https://lucida.to"
-    private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    private val browserUserAgent by lazy {
+        runCatching { WebSettings.getDefaultUserAgent(context) }.getOrDefault(USER_AGENT)
+    }
+    private val cookieManager by lazy { runCatching { CookieManager.getInstance() }.getOrNull() }
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .followRedirects(true)
-        .build()
-
-    private val TOKEN_REGEX = Pattern.compile("token:\\s*\"([^\"]+)\"")
-    private val EXPIRY_REGEX = Pattern.compile("tokenExpiry:\\s*(\\d+)")
-
-    /**
-     * Search Lucida (Amazon Music / Lossless FLAC) for tracks
-     */
-    suspend fun search(query: String, limit: Int = 5): List<DownloadableTrack> = withContext(Dispatchers.IO) {
-        try {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val searchUrl = "$BASE_URL/search?service=amazon&country=US&query=$encodedQuery"
-
-            val request = Request.Builder()
-                .url(searchUrl)
-                .header("User-Agent", USER_AGENT)
-                .header("Referer", "$BASE_URL/")
-                .build()
-
-            val html = httpClient.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext emptyList()
-                resp.body?.string() ?: ""
+        .addNetworkInterceptor { chain ->
+            val request = chain.request()
+            val url = request.url
+            if (!url.isHttps || url.host != HOST || url.port != 443) {
+                return@addNetworkInterceptor chain.proceed(request)
             }
 
-            val tracks = mutableListOf<DownloadableTrack>()
-
-            // Extract SvelteKit data JSON array: "const data = ["
-            val marker = "const data = ["
-            val startIdx = html.indexOf(marker)
-            if (startIdx != -1) {
-                val jsonStart = startIdx + "const data = ".length
-                var bracketCount = 0
-                var inString = false
-                var escapeNext = false
-                var endIdx = -1
-
-                for (i in jsonStart until html.length) {
-                    val c = html[i]
-                    if (escapeNext) {
-                        escapeNext = false
-                        continue
-                    }
-                    if (c == '\\') {
-                        escapeNext = true
-                        continue
-                    }
-                    if (c == '"') {
-                        inString = !inString
-                        continue
-                    }
-                    if (!inString) {
-                        if (c == '[' || c == '{') {
-                            bracketCount++
-                        } else if (c == ']' || c == '}') {
-                            bracketCount--
-                            if (bracketCount == 0) {
-                                endIdx = i + 1
-                                break
-                            }
-                        }
-                    }
-                }
-
-                if (endIdx != -1) {
-                    val jsonStr = html.substring(jsonStart, endIdx)
-                    try {
-                        val arr = JSONArray(jsonStr)
-                        if (arr.length() > 1) {
-                            val dataObj = arr.getJSONObject(1)
-                            val resObj = dataObj.optJSONObject("data")?.optJSONObject("results")
-                            val tracksArr = resObj?.optJSONObject("results")?.optJSONArray("tracks")
-
-                            if (tracksArr != null) {
-                                for (i in 0 until minOf(tracksArr.length(), limit)) {
-                                    val t = tracksArr.getJSONObject(i)
-                                    val title = t.optString("title", "Unknown Title")
-                                    val albumObj = t.optJSONObject("album")
-                                    val album = albumObj?.optString("title", "") ?: ""
-                                    val url = t.optString("url", "")
-                                    val thumb = albumObj?.optString("cover", "")?.takeIf { it.isNotBlank() }
-
-                                    val artistsArr = t.optJSONArray("artists")
-                                    val artistsList = mutableListOf<String>()
-                                    if (artistsArr != null) {
-                                        for (a in 0 until artistsArr.length()) {
-                                            val name = artistsArr.getJSONObject(a).optString("name", "")
-                                            if (name.isNotBlank()) artistsList.add(name)
-                                        }
-                                    }
-                                    val artist = if (artistsList.isNotEmpty()) artistsList.joinToString(", ") else "Unknown Artist"
-
-                                    if (url.isNotBlank()) {
-                                        tracks.add(
-                                            DownloadableTrack(
-                                                id = "lucida_${url.hashCode()}",
-                                                title = title,
-                                                artist = artist,
-                                                album = album,
-                                                source = DownloadSource.LUCIDA,
-                                                sourceUrl = url,
-                                                quality = "Lossless FLAC (Amazon Music)",
-                                                thumbnailUrl = thumb
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }
-            }
-
-            tracks
-        } catch (_: Exception) {
-            emptyList()
+            // Use the same browser identity as the in-app verification page.
+            val clearance = cookieManager?.getCookie(url.toString())
+                ?.split(';')
+                ?.firstOrNull { it.trimStart().startsWith("cf_clearance=") }
+                ?.trim()
+            val verifiedRequest = request.newBuilder().header("User-Agent", browserUserAgent)
+            clearance?.let { verifiedRequest.header("Cookie", it) }
+            chain.proceed(verifiedRequest.build())
         }
+        .build()
+    private val searchClient = httpClient.newBuilder().callTimeout(12, TimeUnit.SECONDS).build()
+
+    class VerificationRequired : IOException("Lucida requires browser verification")
+
+    suspend fun search(query: String, limit: Int = 5): Result<List<DownloadableTrack>> {
+        if (query.isBlank() || limit <= 0) return Result.success(emptyList())
+
+        val request = Request.Builder()
+            .url(searchUrl(query))
+            .header("Referer", "$BASE_URL/")
+            .build()
+        return suspendCancellableCoroutine { continuation ->
+            val call = searchClient.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    continuation.resume(Result.failure(e))
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    continuation.resume(runCatching { response.use { readSearchResponse(it, limit) } })
+                }
+            })
+        }
+    }
+
+    companion object {
+        private const val HOST = "lucida.to"
+        private const val BASE_URL = "https://$HOST"
+        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        private val TOKEN_REGEX = Pattern.compile("\\btoken\"?\\s*:\\s*\"([^\"]+)\"")
+        private val EXPIRY_REGEX = Pattern.compile("\\btokenExpiry\"?\\s*:\\s*(\\d+)")
+        private val DATA_NODE = Regex("""\{\s*["']?type["']?\s*:\s*["']data["']\s*,\s*["']?data["']?\s*:\s*(?=\{)""")
+
+        fun searchUrl(query: String) = "$BASE_URL/search".toHttpUrl().newBuilder()
+            .addQueryParameter("service", "amazon")
+            .addQueryParameter("query", query.trim())
+            .build()
+
+        fun readSearchResponse(response: Response, limit: Int): List<DownloadableTrack> {
+            if (response.header("cf-mitigated").equals("challenge", ignoreCase = true)) {
+                throw VerificationRequired()
+            }
+            if (!response.isSuccessful) throw IOException("Lucida search returned HTTP ${response.code}")
+            val page = response.body?.string() ?: throw IOException("Lucida returned an empty search page")
+            return parseSearchPage(page, limit)
+        }
+
+        fun parseSearchPage(page: String, limit: Int): List<DownloadableTrack> {
+            if (limit <= 0) return emptyList()
+
+            // Read each SvelteKit data node independently of its index or the surrounding script.
+            for (match in DATA_NODE.findAll(page)) {
+                val serializedData = page.substring(match.range.last + 1)
+                val data = try {
+                    JsonParser.parseReader(JsonReader(StringReader(serializedData))) as? JsonObject
+                } catch (_: JsonParseException) {
+                    null
+                } ?: continue
+
+                val envelope = (data.get("results") as? JsonObject)
+                    ?: data.takeIf { it.has("tracks") }
+                    ?: continue
+                val success = envelope.get("success") as? JsonPrimitive
+                if (success?.isBoolean == true && !success.asBoolean) {
+                    throw IOException("Lucida's Amazon Music search failed")
+                }
+                val results = (envelope.get("results") as? JsonObject) ?: envelope
+                val tracks = results.get("tracks") as? JsonArray ?: continue
+                val matches = tracks.asSequence()
+                    .mapNotNull { it as? JsonObject }
+                    .mapNotNull(::parseTrack)
+                    .distinctBy { it.id }
+                    .take(limit)
+                    .toList()
+                if (!tracks.isEmpty && matches.isEmpty()) {
+                    throw IOException("Lucida search returned no usable track links")
+                }
+                return matches
+            }
+            throw IOException("Lucida search results were missing from the page")
+        }
+
+        private fun parseTrack(track: JsonObject): DownloadableTrack? {
+            val url = track.string("url")
+            if (url.toHttpUrlOrNull()?.isHttps != true) return null
+
+            val album = track.get("album") as? JsonObject
+            val artists = (track.get("artists") as? JsonArray)?.mapNotNull { artist ->
+                (artist as? JsonObject)?.string("name")?.takeIf { it.isNotBlank() }
+            }.orEmpty()
+            return DownloadableTrack(
+                id = "lucida_${url.hashCode()}",
+                title = track.string("title").ifBlank { "Unknown Title" },
+                artist = artists.joinToString(", ").ifBlank { "Unknown Artist" },
+                album = album?.string("title").orEmpty(),
+                source = DownloadSource.LUCIDA,
+                sourceUrl = url,
+                quality = "Lossless FLAC (Amazon Music)",
+                thumbnailUrl = album?.string("cover")?.takeIf { it.isNotBlank() }
+            )
+        }
+
+        private fun JsonObject.string(name: String): String =
+            (get(name) as? JsonPrimitive)?.takeIf { it.isString }?.asString.orEmpty()
     }
 
     /**
@@ -154,7 +178,7 @@ object LucidaDownloader {
         onProgress: (progress: Float, downloaded: Long, total: Long) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
         try {
-            val pageUrl = "$BASE_URL/?url=$trackUrl"
+            val pageUrl = BASE_URL.toHttpUrl().newBuilder().addQueryParameter("url", trackUrl).build()
             val pageReq = Request.Builder()
                 .url(pageUrl)
                 .header("User-Agent", USER_AGENT)
@@ -218,13 +242,13 @@ object LucidaDownloader {
             val initResStr = httpClient.newCall(initReq).execute().use { it.body?.string() ?: "" }
             val initJson = JSONObject(initResStr)
 
-            if (initJson.optBoolean("success", false) != true) {
+            if (initJson.has("success") && !initJson.optBoolean("success")) {
                 val err = initJson.optString("error", "Failed to initialize server stream")
                 return@withContext Result.failure(Exception("Lucida error: $err"))
             }
 
             val handoff = initJson.optString("handoff", "")
-            val serverName = initJson.optString("name", "katze")
+            val serverName = initJson.optString("server").ifBlank { initJson.optString("name", "katze") }
 
             if (handoff.isBlank()) {
                 return@withContext Result.failure(Exception("Missing server handoff ID"))

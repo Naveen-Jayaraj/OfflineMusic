@@ -59,6 +59,7 @@ class DownloadManager private constructor(private val context: Context) {
     val allDownloadRecords = downloadDao.getAllDownloadsFlow()
 
     private val musicScanner = MusicScanner(context)
+    internal val lucidaDownloader = LucidaDownloader(context)
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -466,7 +467,7 @@ class DownloadManager private constructor(private val context: Context) {
         }
 
         // Try Lucida search as fallback
-        val lucidaResults = LucidaDownloader.search(query, limit = 5)
+        val lucidaResults = lucidaDownloader.search(query, limit = 5).getOrNull().orEmpty()
         if (lucidaResults.isNotEmpty()) {
             val best = FuzzyMatcher.findBestMatch(track.title, track.artist, lucidaResults) { it.title to it.artist }
             if (best != null) return best
@@ -502,7 +503,7 @@ class DownloadManager private constructor(private val context: Context) {
         }
 
         var downloadResult = if (track.source == DownloadSource.LUCIDA) {
-            LucidaDownloader.downloadTrack(streamIdentifier, tempAudioFile) { prog, dl, tot ->
+            lucidaDownloader.downloadTrack(streamIdentifier, tempAudioFile) { prog, dl, tot ->
                 updateDownloadProgress(downloadId, prog, dl, tot)
             }
         } else {
