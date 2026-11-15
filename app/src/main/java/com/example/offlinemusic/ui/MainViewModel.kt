@@ -123,6 +123,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _likedSongIds = MutableStateFlow<Set<String>>(emptySet())
     val likedSongIds: StateFlow<Set<String>> = _likedSongIds.asStateFlow()
 
+    private val _showTutorial = MutableStateFlow(!preferences.hasSeenTutorial)
+    val showTutorial: StateFlow<Boolean> = _showTutorial.asStateFlow()
+
+    fun dismissTutorial() {
+        preferences.hasSeenTutorial = true
+        _showTutorial.value = false
+    }
+
+    fun openTutorial() {
+        _showTutorial.value = true
+    }
+
+    suspend fun resolveAndDownloadStarterSong(query: String): DownloadableTrack? {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Try Lucida first
+                val lucidaResults = downloadManager.lucidaDownloader.search(query, limit = 1).getOrNull().orEmpty()
+                val candidate = if (lucidaResults.isNotEmpty()) {
+                    lucidaResults.first()
+                } else {
+                    YouTubeDownloader.search(query, limit = 1).firstOrNull()
+                }
+                if (candidate != null) {
+                    downloadTrack(candidate, startStreaming = false)
+                    candidate
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                Log.w("MainViewModel", "Failed to resolve starter song: $query", e)
+                null
+            }
+        }
+    }
+
     private val _currentTab = MutableStateFlow(BottomNavTab.HOME)
     val currentTab: StateFlow<BottomNavTab> = _currentTab.asStateFlow()
 

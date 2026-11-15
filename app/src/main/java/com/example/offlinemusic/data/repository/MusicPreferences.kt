@@ -24,7 +24,12 @@ class MusicPreferences(context: Context) {
         private const val KEY_EQUALIZER_ENABLED = "key_equalizer_enabled"
         private const val KEY_EQUALIZER_GAINS = "key_equalizer_gains"
         private const val KEY_LAST_DYNAMIC_MIX_TIME = "key_last_dynamic_mix_time"
+        private const val KEY_HAS_SEEN_TUTORIAL = "key_has_seen_tutorial"
     }
+
+    var hasSeenTutorial: Boolean
+        get() = prefs.getBoolean(KEY_HAS_SEEN_TUTORIAL, false)
+        set(value) = prefs.edit().putBoolean(KEY_HAS_SEEN_TUTORIAL, value).apply()
 
     var lastDynamicMixTimestamp: Long
         get() = prefs.getLong(KEY_LAST_DYNAMIC_MIX_TIME, 0L)

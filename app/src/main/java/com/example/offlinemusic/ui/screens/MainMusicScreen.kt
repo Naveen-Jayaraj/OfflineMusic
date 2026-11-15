@@ -86,6 +86,7 @@ fun MainMusicScreen(
     val enrichmentStats by viewModel.enrichmentStats.collectAsState()
     val isEnriching by viewModel.isEnriching.collectAsState()
     val currentEnrichingTitle by viewModel.currentEnrichingTitle.collectAsState()
+    val showTutorial by viewModel.showTutorial.collectAsState()
 
     // Dialog states for customizable playlists
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
@@ -355,7 +356,8 @@ fun MainMusicScreen(
                                     isEnriching = isEnriching,
                                     currentEnrichingTitle = currentEnrichingTitle,
                                     onWakeUpServerClick = { viewModel.wakeUpMetaEnricher() },
-                                    onEnrichAllClick = { viewModel.triggerBackgroundEnrichment() }
+                                    onEnrichAllClick = { viewModel.triggerBackgroundEnrichment() },
+                                    onOpenTutorial = { viewModel.openTutorial() }
                                 )
                             }
                         }
@@ -584,6 +586,17 @@ fun MainMusicScreen(
                 selectedGenre = null,
                 onSelectGenre = {},
                 onDismiss = { viewModel.hideSortSheet() }
+            )
+        }
+
+        // Beginner Walkthrough & Feature Guide
+        if (showTutorial) {
+            com.example.offlinemusic.ui.components.BeginnerTutorialDialog(
+                onDismiss = { viewModel.dismissTutorial() },
+                downloads = downloads,
+                allSongs = allSongs,
+                onDownloadStarterTrack = { query -> viewModel.resolveAndDownloadStarterSong(query) },
+                onPlaySong = { song -> viewModel.playSong(song, listOf(song)) }
             )
         }
     }

@@ -124,6 +124,7 @@ internal fun SettingsScreen(
     currentEnrichingTitle: String? = null,
     onWakeUpServerClick: () -> Unit = {},
     onEnrichAllClick: () -> Unit = {},
+    onOpenTutorial: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showEqualizer by rememberSaveable { mutableStateOf(false) }
@@ -639,6 +640,13 @@ internal fun SettingsScreen(
                 )
 
                 SettingsGroupCard {
+                    SettingsActionRow(
+                        title = "Beginner Tutorial & Guide",
+                        subtitle = "Interactive walkthrough: learn all features & try downloading music",
+                        icon = Icons.Default.AutoAwesome,
+                        onClick = onOpenTutorial
+                    )
+                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                     SettingsActionRow(
                         title = "About BitTune",
                         subtitle = "Version 1.0.0 • Audio Engine, Privacy & Terms of Service",
