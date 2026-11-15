@@ -17,6 +17,7 @@ import com.example.offlinemusic.ui.theme.OfflineMusicTheme
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -55,7 +56,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            OfflineMusicTheme {
+            val theme by viewModel.appTheme.collectAsState()
+            OfflineMusicTheme(theme = theme) {
                 var showSplash by rememberSaveable { mutableStateOf(savedInstanceState == null) }
 
                 LaunchedEffect(showSplash) {

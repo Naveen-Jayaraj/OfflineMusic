@@ -26,6 +26,7 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
     private val repository = MusicRepository(context)
     private var mediaController: MediaController? = null
+    internal val soundEqualizer = SoundEqualizer.getInstance(context)
 
     private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
         android.util.Log.e("MusicPlayerManager", "Unhandled coroutine error", throwable)

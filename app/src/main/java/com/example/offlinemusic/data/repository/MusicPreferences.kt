@@ -3,6 +3,7 @@ package com.example.offlinemusic.data.repository
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import com.example.offlinemusic.data.model.AppTheme
 import com.example.offlinemusic.data.model.SortBy
 import com.example.offlinemusic.data.model.SortOption
 import com.example.offlinemusic.data.model.SortOrder
@@ -19,6 +20,9 @@ class MusicPreferences(context: Context) {
         private const val KEY_LAST_PLAYED_ID = "key_last_played_id"
         private const val KEY_RECENT_SEARCHES = "key_recent_searches"
         private const val KEY_DOWNLOAD_SOURCE = "key_download_source"
+        private const val KEY_APP_THEME = "key_app_theme"
+        private const val KEY_EQUALIZER_ENABLED = "key_equalizer_enabled"
+        private const val KEY_EQUALIZER_GAINS = "key_equalizer_gains"
     }
 
     var downloadSourcePreference: com.example.offlinemusic.downloader.models.DownloadSourceFilter
@@ -33,6 +37,33 @@ class MusicPreferences(context: Context) {
         set(value) {
             prefs.edit().putString(KEY_DOWNLOAD_SOURCE, value.name).apply()
         }
+
+    var appTheme: AppTheme
+        get() {
+            val savedTheme = prefs.getString(KEY_APP_THEME, null)
+            return AppTheme.entries.firstOrNull { it.name == savedTheme } ?: AppTheme.DEFAULT
+        }
+        set(value) = prefs.edit().putString(KEY_APP_THEME, value.name).apply()
+
+    val equalizerEnabled: Boolean
+        get() = prefs.getBoolean(KEY_EQUALIZER_ENABLED, false)
+
+    val equalizerGains: Map<Int, Int>
+        get() = prefs.getStringSet(KEY_EQUALIZER_GAINS, emptySet()).orEmpty()
+            .mapNotNull { entry ->
+                val frequency = entry.substringBefore(':').toIntOrNull()?.takeIf { it > 0 }
+                    ?: return@mapNotNull null
+                val gain = entry.substringAfter(':', "").toIntOrNull() ?: return@mapNotNull null
+                frequency to gain
+            }
+            .toMap()
+
+    fun saveEqualizer(enabled: Boolean, gains: Map<Int, Int>) {
+        prefs.edit()
+            .putBoolean(KEY_EQUALIZER_ENABLED, enabled)
+            .putStringSet(KEY_EQUALIZER_GAINS, gains.map { (frequency, gain) -> "$frequency:$gain" }.toSet())
+            .apply()
+    }
 
     fun getRecentSearches(): List<String> {
         val raw = prefs.getString(KEY_RECENT_SEARCHES, null) ?: return emptyList()

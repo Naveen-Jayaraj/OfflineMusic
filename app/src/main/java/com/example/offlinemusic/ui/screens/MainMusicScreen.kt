@@ -76,6 +76,7 @@ fun MainMusicScreen(
     val detectedSpotifyPlaylist by viewModel.detectedSpotifyPlaylist.collectAsState()
     val isFetchingSpotifyPlaylist by viewModel.isFetchingSpotifyPlaylist.collectAsState()
     val downloadSourceFilter by viewModel.downloadSourceFilter.collectAsState()
+    val appTheme by viewModel.appTheme.collectAsState()
     val currentLyrics by viewModel.currentLyrics.collectAsState()
     val currentLyricsIndex by viewModel.currentLyricsIndex.collectAsState()
     val artistChooserList by viewModel.artistChooserList.collectAsState()
@@ -333,6 +334,9 @@ fun MainMusicScreen(
                                     isLoading = isLoading,
                                     onChangeFolderClick = onPickFolderClick,
                                     onRescanClick = { viewModel.rescan() },
+                                    appTheme = appTheme,
+                                    onThemeChange = viewModel::setAppTheme,
+                                    soundEqualizer = viewModel.playerManager.soundEqualizer,
                                     downloadSourceFilter = downloadSourceFilter,
                                     onDownloadSourceFilterChange = { viewModel.setDownloadSourceFilter(it) },
                                     onNavigateToTab = { viewModel.selectTab(it) },

@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.offlinemusic.data.database.MusicDatabase
 import com.example.offlinemusic.data.model.Album
+import com.example.offlinemusic.data.model.AppTheme
 import com.example.offlinemusic.data.model.ArtistProfile
 import com.example.offlinemusic.data.model.Playlist
 import com.example.offlinemusic.data.model.Song
@@ -83,6 +84,8 @@ enum class LucidaSearchIssue {
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val preferences = MusicPreferences(application)
+    private val _appTheme = MutableStateFlow(preferences.appTheme)
+    val appTheme: StateFlow<AppTheme> = _appTheme.asStateFlow()
     val scanner = MusicScanner(application)
     val playerManager = MusicPlayerManager.getInstance(application)
     val metaEnricher = com.example.offlinemusic.data.remote.MetaEnricherManager.getInstance(application)
@@ -639,6 +642,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
         triggerOnlineSearch(query)
+    }
+
+    fun setAppTheme(theme: AppTheme) {
+        preferences.appTheme = theme
+        _appTheme.value = theme
     }
 
     fun setDownloadSourceFilter(filter: DownloadSourceFilter) {
