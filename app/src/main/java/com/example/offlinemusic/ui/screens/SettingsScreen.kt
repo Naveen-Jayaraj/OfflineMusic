@@ -1,14 +1,11 @@
 package com.example.offlinemusic.ui.screens
 
-import android.content.Intent
-import android.media.audiofx.AudioEffect
 import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +21,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,31 +48,26 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,10 +75,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.offlinemusic.data.database.entities.ArtistEntity
 import com.example.offlinemusic.data.model.Album
+import com.example.offlinemusic.data.model.AppTheme
 import com.example.offlinemusic.data.model.Playlist
 import com.example.offlinemusic.data.model.Song
 import com.example.offlinemusic.downloader.models.DownloadSourceFilter
+import com.example.offlinemusic.player.SoundEqualizer
 import com.example.offlinemusic.ui.components.ArtworkView
+import com.example.offlinemusic.ui.components.SoundEqualizerSheet
+import com.example.offlinemusic.ui.components.ThemePicker
 import com.example.offlinemusic.ui.navigation.BottomNavTab
 
 enum class OverviewListType(val title: String) {
@@ -98,7 +93,7 @@ enum class OverviewListType(val title: String) {
 }
 
 @Composable
-fun SettingsScreen(
+internal fun SettingsScreen(
     folderName: String?,
     songCount: Int,
     playlistCount: Int,
@@ -107,6 +102,9 @@ fun SettingsScreen(
     isLoading: Boolean,
     onChangeFolderClick: () -> Unit,
     onRescanClick: () -> Unit,
+    appTheme: AppTheme,
+    onThemeChange: (AppTheme) -> Unit,
+    soundEqualizer: SoundEqualizer,
     downloadSourceFilter: DownloadSourceFilter = DownloadSourceFilter.BOTH,
     onDownloadSourceFilterChange: (DownloadSourceFilter) -> Unit = {},
     onNavigateToTab: (BottomNavTab) -> Unit = {},
@@ -128,8 +126,7 @@ fun SettingsScreen(
     onEnrichAllClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    var showEqualizerDialog by remember { mutableStateOf(false) }
+    var showEqualizer by rememberSaveable { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var activeOverviewType by remember { mutableStateOf<OverviewListType?>(null) }
 
@@ -150,6 +147,20 @@ fun SettingsScreen(
                 ),
                 color = MaterialTheme.colorScheme.onBackground
             )
+        }
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "THEME",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                ThemePicker(selectedTheme = appTheme, onThemeSelected = onThemeChange)
+            }
         }
 
         // 2. Library Overview Stats Grid (Tappable to open interactive lists + subtle Insights pill)
@@ -605,12 +616,11 @@ fun SettingsScreen(
                 )
 
                 SettingsGroupCard {
-                    // Sound Equalizer with Graph
                     SettingsActionRow(
                         title = "Sound Equalizer",
-                        subtitle = "Frequency graph, 5-band EQ & sound presets",
+                        subtitle = "Band gain and sound presets",
                         icon = Icons.Default.Equalizer,
-                        onClick = { showEqualizerDialog = true }
+                        onClick = { showEqualizer = true }
                     )
                 }
             }
@@ -656,18 +666,8 @@ fun SettingsScreen(
         )
     }
 
-    // Sound Equalizer Dialog with Graphic Equalizer Spectrum & 5-Band Sliders
-    if (showEqualizerDialog) {
-        SoundEqualizerDialog(
-            onDismiss = { showEqualizerDialog = false },
-            onLaunchSystemEqualizer = {
-                try {
-                    val intent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL)
-                    context.startActivity(intent)
-                } catch (_: Exception) {
-                }
-            }
-        )
+    if (showEqualizer) {
+        SoundEqualizerSheet(equalizer = soundEqualizer, onDismiss = { showEqualizer = false })
     }
 
     // Consolidated About App, Engine Specs, Privacy & Terms Modal
@@ -1144,151 +1144,6 @@ private fun SettingsActionRow(
             )
         }
     }
-}
-
-// -------------------------------------------------------------------------------------------------
-// Sound Equalizer Dialog
-// -------------------------------------------------------------------------------------------------
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SoundEqualizerDialog(
-    onDismiss: () -> Unit,
-    onLaunchSystemEqualizer: () -> Unit
-) {
-    var bassLevel by remember { mutableFloatStateOf(6f) }
-    var midLevel by remember { mutableFloatStateOf(0f) }
-    var trebleLevel by remember { mutableFloatStateOf(4f) }
-    var selectedPreset by remember { mutableStateOf("Warm Hi-Fi") }
-
-    val presets = listOf("Flat", "Bass Boost", "Warm Hi-Fi", "Vocal Clarity", "Electronic")
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Equalizer,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "Sound Equalizer",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                )
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Text(
-                    text = "Presets",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    presets.forEach { preset ->
-                        FilterChip(
-                            selected = selectedPreset == preset,
-                            onClick = {
-                                selectedPreset = preset
-                                when (preset) {
-                                    "Flat" -> { bassLevel = 0f; midLevel = 0f; trebleLevel = 0f }
-                                    "Bass Boost" -> { bassLevel = 8f; midLevel = -1f; trebleLevel = 1f }
-                                    "Warm Hi-Fi" -> { bassLevel = 6f; midLevel = 0f; trebleLevel = 4f }
-                                    "Vocal Clarity" -> { bassLevel = -2f; midLevel = 6f; trebleLevel = 4f }
-                                    "Electronic" -> { bassLevel = 7f; midLevel = 1f; trebleLevel = 6f }
-                                }
-                            },
-                            label = { Text(preset, fontSize = 12.sp) }
-                        )
-                    }
-                }
-
-                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                // 3-Band Sliders
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Bass (60 - 250 Hz)", style = MaterialTheme.typography.bodySmall)
-                        Text(
-                            "${if (bassLevel > 0) "+" else ""}${bassLevel.toInt()} dB",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Slider(
-                        value = bassLevel,
-                        onValueChange = { bassLevel = it; selectedPreset = "Custom" },
-                        valueRange = -10f..10f,
-                        steps = 20
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Mid (500 - 2 kHz)", style = MaterialTheme.typography.bodySmall)
-                        Text(
-                            "${if (midLevel > 0) "+" else ""}${midLevel.toInt()} dB",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Slider(
-                        value = midLevel,
-                        onValueChange = { midLevel = it; selectedPreset = "Custom" },
-                        valueRange = -10f..10f,
-                        steps = 20
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Treble (4 - 16 kHz)", style = MaterialTheme.typography.bodySmall)
-                        Text(
-                            "${if (trebleLevel > 0) "+" else ""}${trebleLevel.toInt()} dB",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Slider(
-                        value = trebleLevel,
-                        onValueChange = { trebleLevel = it; selectedPreset = "Custom" },
-                        valueRange = -10f..10f,
-                        steps = 20
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = onLaunchSystemEqualizer,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("Open System Dolby / Audio FX Panel", fontSize = 12.sp)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Done")
-            }
-        }
-    )
 }
 
 // -------------------------------------------------------------------------------------------------

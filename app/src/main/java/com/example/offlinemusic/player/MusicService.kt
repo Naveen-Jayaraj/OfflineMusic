@@ -10,6 +10,7 @@ import android.os.Build
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -28,12 +29,14 @@ class MusicService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
     private lateinit var player: ExoPlayer
+    private val soundEqualizer by lazy { SoundEqualizer.getInstance(this) }
 
     companion object {
         const val CHANNEL_ID = "offline_music_playback_channel"
         const val CHANNEL_NAME = "Music Playback"
     }
 
+    @androidx.annotation.OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -96,11 +99,21 @@ class MusicService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_LOCAL) // Keeps CPU awake for screen-off & background playback
             .build().apply {
                 addListener(object : Player.Listener {
+                    override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                        soundEqualizer.attach(audioSessionId)
+                    }
+
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        if (isPlaying) soundEqualizer.attach(player.audioSessionId)
+                    }
+
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         android.util.Log.e("MusicService", "ExoPlayer error: ${error.errorCodeName}", error)
                     }
                 })
             }
+
+        soundEqualizer.attach(player.audioSessionId)
 
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -174,6 +187,7 @@ class MusicService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        soundEqualizer.attach(0)
         mediaSession?.run {
             player.stop()
             player.clearMediaItems()
