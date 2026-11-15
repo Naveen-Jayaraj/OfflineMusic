@@ -275,10 +275,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _allPlaylists,
         _sortOption
     ) { playlists, sort ->
-        // Liked Songs always appears first, followed by Recently Downloaded
+        // Liked Songs always appears first, followed by Recently Downloaded, then 6-Hour Dynamic Mixes
         val liked = playlists.filter { it.isLikedSpecial }
         val downloaded = playlists.filter { it.isRecentlyDownloadedSpecial }
-        val others = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial }
+        val dynamics = playlists.filter { it.isDynamic6hSpecial }
+        val others = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && !it.isDynamic6hSpecial }
 
         val sortedOthers = when (sort.sortBy) {
             SortBy.TITLE, SortBy.ALBUM -> {
@@ -303,8 +304,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        liked + downloaded + sortedOthers
+        liked + downloaded + dynamics + sortedOthers
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val dynamicPlaylists: StateFlow<List<Playlist>> = scanner.repository.dynamicPlaylists
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun refreshDynamicMixes() {
+        viewModelScope.launch {
+            scanner.repository.checkAndRefreshDynamicPlaylists(force = true)
+        }
+    }
 
     // Filtered Albums for albums listing / search
     val filteredAlbums: StateFlow<List<Album>> = combine(
@@ -404,6 +414,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             scanner.repository.normalizeAndCleanArtistProfiles()
             scanner.repository.syncFolderAndLikedPlaylists()
+            scanner.repository.checkAndRefreshDynamicPlaylists(force = false)
         }
 
         // Collect reactive Room flows

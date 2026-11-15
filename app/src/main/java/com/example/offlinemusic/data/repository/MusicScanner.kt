@@ -594,7 +594,8 @@ class MusicScanner(private val context: Context) {
         language: String? = null,
         mood: String? = null,
         source: String = "DOWNLOAD",
-        metachecked: Boolean = false
+        metachecked: Boolean = false,
+        trackNumber: Int? = null
     ): Song = withContext(Dispatchers.IO) {
         val fileUri = Uri.fromFile(audioFile).toString()
         val trackId = fileUri.hashCode().toUInt().toString(16)
@@ -689,6 +690,7 @@ class MusicScanner(private val context: Context) {
             artist = artist.trim(),
             album = album?.trim(),
             year = year,
+            trackNumber = trackNumber,
             genre = genre,
             producer = producer,
             composer = composer,
@@ -746,7 +748,8 @@ class MusicScanner(private val context: Context) {
         newLanguage: String? = null,
         newMood: String? = null,
         newSource: String = "DOWNLOAD",
-        newMetachecked: Boolean = false
+        newMetachecked: Boolean = false,
+        newTrackNumber: Int? = null
     ): Song = withContext(Dispatchers.IO) {
         val existingEntity = db.trackDao().getTrackById(existingTrackId)
         val oldFileUri = existingEntity?.fileUri
@@ -834,6 +837,7 @@ class MusicScanner(private val context: Context) {
             album = newAlbum ?: existingEntity?.album,
             genre = newGenre ?: existingEntity?.genre,
             year = newYear ?: existingEntity?.year,
+            trackNumber = newTrackNumber ?: existingEntity?.trackNumber,
             producer = newProducer ?: existingEntity?.producer,
             composer = newComposer ?: existingEntity?.composer,
             language = newLanguage ?: existingEntity?.language,

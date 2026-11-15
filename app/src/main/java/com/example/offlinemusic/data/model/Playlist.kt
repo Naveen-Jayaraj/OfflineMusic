@@ -9,8 +9,9 @@ data class Playlist(
     val songCount: Int,
     val totalDurationMs: Long,
     val artworkUri: Uri?,
-    val playlistType: String, // "LIKED", "FOLDER", "USER", "SMART"
+    val playlistType: String, // "LIKED", "FOLDER", "USER", "SMART", "DYNAMIC_6H"
     val folderSourceId: String? = null,
+    val createdAt: Long = 0L,
     val songs: List<Song> = emptyList()
 ) {
     val formattedDuration: String
@@ -30,4 +31,18 @@ data class Playlist(
 
     val isRecentlyDownloadedSpecial: Boolean
         get() = playlistType == "DOWNLOADS" || id == "recently_downloaded"
+
+    val isDynamic6hSpecial: Boolean
+        get() = playlistType == "DYNAMIC_6H" || id.startsWith("dynamic_")
+
+    val remainingExpiryFormatted: String
+        get() {
+            val expiryTime = createdAt + 6 * 3600 * 1000L
+            val remainingMs = expiryTime - System.currentTimeMillis()
+            if (remainingMs <= 0) return "Expiring soon"
+            val totalMinutes = (remainingMs / (60 * 1000L)).coerceAtLeast(1)
+            val hours = totalMinutes / 60
+            val minutes = totalMinutes % 60
+            return if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
+        }
 }

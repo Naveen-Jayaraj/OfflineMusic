@@ -44,6 +44,8 @@ class MusicRepository(private val context: Context) {
     private val playEventDao = db.playEventDao()
     private val folderSourceDao = db.folderSourceDao()
     private val libraryDao = db.libraryDao()
+    private val preferences = MusicPreferences(context)
+    val dynamicPlaylistManager = DynamicPlaylistManager(db, preferences)
 
     val allTracks: Flow<List<Song>> = libraryDao.getAllTracksWithDetailsFlow().map { list ->
         list.map { it.toSong() }
@@ -57,6 +59,15 @@ class MusicRepository(private val context: Context) {
 
     val allPlaylists: Flow<List<Playlist>> = playlistDao.getAllPlaylistsWithStatsFlow().map { list ->
         list.map { it.toPlaylist() }
+    }
+
+    val dynamicPlaylists: Flow<List<Playlist>> = playlistDao.getAllPlaylistsWithStatsFlow().map { list ->
+        list.filter { it.playlistType == DynamicPlaylistManager.PLAYLIST_TYPE_DYNAMIC }
+            .map { it.toPlaylist() }
+    }
+
+    suspend fun checkAndRefreshDynamicPlaylists(force: Boolean = false): Boolean {
+        return dynamicPlaylistManager.checkAndRefreshDynamicPlaylists(force)
     }
 
     val allArtists: Flow<List<com.example.offlinemusic.data.database.entities.ArtistEntity>> = artistDao.getAllArtistsFlow()
@@ -225,7 +236,8 @@ class MusicRepository(private val context: Context) {
         newMood: String? = null,
         newSource: String? = null,
         newLyricsAvailable: Boolean? = null,
-        newMetachecked: Boolean? = null
+        newMetachecked: Boolean? = null,
+        newTrackNumber: Int? = null
     ): Song? = withContext(Dispatchers.IO) {
         val track = trackDao.getTrackById(trackId) ?: return@withContext null
         val fileUri = Uri.parse(track.fileUri)
@@ -340,6 +352,7 @@ class MusicRepository(private val context: Context) {
                 albumId = targetAlbumId,
                 artworkUri = finalArtworkUri,
                 year = newYear ?: track.year,
+                trackNumber = newTrackNumber ?: track.trackNumber,
                 producer = newProducer ?: track.producer,
                 composer = newComposer ?: track.composer,
                 language = newLanguage ?: track.language,
@@ -577,6 +590,7 @@ class MusicRepository(private val context: Context) {
             artworkUri = firstArt,
             playlistType = playlist.playlistType,
             folderSourceId = playlist.folderSourceId,
+            createdAt = playlist.createdAt,
             songs = tracks
         )
     }
@@ -981,6 +995,7 @@ class MusicRepository(private val context: Context) {
             artworkUri = artworkUri?.let { Uri.parse(it) },
             playlistType = playlistType,
             folderSourceId = folderSourceId,
+            createdAt = createdAt,
             songs = emptyList()
         )
     }

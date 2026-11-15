@@ -99,7 +99,7 @@ object ArtistNormalizer {
         val lower = stripped.lowercase(Locale.ROOT)
 
         // 3. Remove punctuation except internal alphanumeric chars and spaces
-        val cleanPunctuation = lower.replace("[^a-z0-9\\s]".toRegex(), " ")
+        val cleanPunctuation = lower.replace("[^\\p{L}\\p{M}\\p{N}\\s]".toRegex(), " ")
 
         // 4. Collapse multiple spaces into single space
         return cleanPunctuation.replace("\\s+".toRegex(), " ").trim()
@@ -227,6 +227,9 @@ object ArtistNormalizer {
      */
     fun splitCollaborators(text: String): List<String> {
         val trimmed = text.trim()
+        if (" / " in trimmed) {
+            return trimmed.split(" / ").map(String::trim).filter(String::isNotBlank)
+        }
         val norm = normalize(trimmed)
         if (norm in KNOWN_GROUPS_WITH_CONNECTORS) {
             return listOf(trimmed)

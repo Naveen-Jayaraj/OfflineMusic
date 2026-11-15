@@ -84,16 +84,16 @@ interface TrackDao {
     @Query("UPDATE tracks SET lyrics_uri = :lyricsUri WHERE id = :trackId")
     suspend fun updateLyricsUri(trackId: String, lyricsUri: String?)
 
-    @Query("SELECT * FROM tracks WHERE metachecked = 0 AND metadata_status NOT IN ('CONFIRMED', 'ENRICHED', 'MANUAL') ORDER BY date_added DESC")
+    @Query("SELECT * FROM tracks WHERE metachecked = 0 AND metadata_status NOT IN ('CONFIRMED', 'ENRICHED', 'MANUAL', 'LOOKUP_MISS') ORDER BY date_added DESC")
     suspend fun getUnenrichedTracks(): List<TrackEntity>
 
-    @Query("UPDATE tracks SET metachecked = 1, metadata_status = 'CONFIRMED' WHERE id = :trackId")
-    suspend fun markTrackEnriched(trackId: String)
+    @Query("UPDATE tracks SET metadata_status = 'LOOKUP_MISS' WHERE id = :trackId AND metachecked = 0 AND metadata_status NOT IN ('CONFIRMED', 'ENRICHED', 'MANUAL')")
+    suspend fun markTrackLookupMiss(trackId: String)
 
     @Query("SELECT COUNT(*) FROM tracks WHERE metachecked = 1 OR metadata_status IN ('CONFIRMED', 'ENRICHED', 'MANUAL')")
     suspend fun getEnrichedCount(): Int
 
-    @Query("SELECT COUNT(*) FROM tracks WHERE metachecked = 0 AND metadata_status NOT IN ('CONFIRMED', 'ENRICHED', 'MANUAL')")
+    @Query("SELECT COUNT(*) FROM tracks WHERE metachecked = 0 AND metadata_status NOT IN ('CONFIRMED', 'ENRICHED', 'MANUAL', 'LOOKUP_MISS')")
     suspend fun getUnenrichedCount(): Int
 
     @Query("DELETE FROM tracks")

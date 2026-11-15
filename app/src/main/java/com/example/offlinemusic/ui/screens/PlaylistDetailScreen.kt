@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -195,9 +197,10 @@ fun PlaylistDetailScreen(
 
     val isLikedSpecial = playlist.isLikedSpecial
     val isRecentlyDownloadedSpecial = playlist.isRecentlyDownloadedSpecial
+    val isDynamic6hSpecial = playlist.isDynamic6hSpecial
     val isFolder = playlist.playlistType == "FOLDER"
     val isUserPlaylist = playlist.playlistType == "USER"
-    val isSpecialSystemPlaylist = isLikedSpecial || isRecentlyDownloadedSpecial
+    val isSpecialSystemPlaylist = isLikedSpecial || isRecentlyDownloadedSpecial || isDynamic6hSpecial
 
     Column(
         modifier = modifier
@@ -226,6 +229,7 @@ fun PlaylistDetailScreen(
                     imageVector = when {
                         isLikedSpecial -> Icons.Default.Favorite
                         isRecentlyDownloadedSpecial -> Icons.Default.DownloadDone
+                        isDynamic6hSpecial -> Icons.Default.AutoAwesome
                         isFolder -> Icons.Default.Folder
                         else -> Icons.Default.QueueMusic
                     },
@@ -233,6 +237,7 @@ fun PlaylistDetailScreen(
                     tint = when {
                         isLikedSpecial -> MaterialTheme.colorScheme.tertiary
                         isRecentlyDownloadedSpecial -> MaterialTheme.colorScheme.primary
+                        isDynamic6hSpecial -> MaterialTheme.colorScheme.primary
                         isFolder -> MaterialTheme.colorScheme.primary
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
@@ -243,11 +248,12 @@ fun PlaylistDetailScreen(
                     text = when {
                         isLikedSpecial -> "LIKED SONGS"
                         isRecentlyDownloadedSpecial -> "RECENTLY DOWNLOADED"
+                        isDynamic6hSpecial -> "⚡ 6-HOUR DYNAMIC MIX"
                         isFolder -> "FOLDER PLAYLIST"
                         else -> "PLAYLIST"
                     },
                     style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isDynamic6hSpecial) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -452,6 +458,7 @@ fun PlaylistDetailScreen(
                     val defaultDesc = when {
                         isLikedSpecial -> "Your collection of favorite tracks"
                         isRecentlyDownloadedSpecial -> "Songs downloaded to your device"
+                        isDynamic6hSpecial -> "Based on your latest listening stats • Refreshes in ${playlist.remainingExpiryFormatted}"
                         isFolder -> "All tracks in this folder"
                         else -> ""
                     }
@@ -726,6 +733,7 @@ fun PlaylistDetailScreen(
                             text = when {
                                 isLikedSpecial -> "No liked songs yet. Tap the heart on any song to add it."
                                 isRecentlyDownloadedSpecial -> "No downloaded songs yet. Search and download songs to listen offline."
+                                isDynamic6hSpecial -> "No songs matched this mix in your library."
                                 else -> "No songs in this playlist. Tap 'Add Songs' to get started."
                             },
                             style = MaterialTheme.typography.bodyMedium,
@@ -875,7 +883,7 @@ fun PlaylistDetailScreen(
                                 }
 
                                 DropdownMenuItem(
-                                    text = { Text(if (isLikedSpecial) "Unlike (Remove from Liked)" else "Remove from this Playlist", color = MaterialTheme.colorScheme.error) },
+                                    text = { Text(if (isLikedSpecial) "Unlike (Remove from Liked)" else if (isDynamic6hSpecial) "Remove from this Mix" else "Remove from this Playlist", color = MaterialTheme.colorScheme.error) },
                                     leadingIcon = { Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                                     onClick = {
                                         songMenuExpanded = false

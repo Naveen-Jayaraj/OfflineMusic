@@ -565,29 +565,35 @@ class DownloadManager private constructor(private val context: Context) {
             rawTitle = track.title,
             rawArtist = track.artist,
             fallbackThumbnailUrl = track.thumbnailUrl,
-            durationMs = track.durationMs
+            durationMs = track.durationMs,
+            album = track.album.takeUnless { it.isBlank() },
+            youtubeId = if (track.source == DownloadSource.YOUTUBE) {
+                YouTubeDownloader.extractVideoId(streamIdentifier)
+            } else null
         )
 
         // Fetch Lyrics (.lrc) - Try MetaEnricher first, fallback to LrclibClient
         val lrcFile = File(targetDir, "${safeFilename}.lrc")
         var lyricsSaved = false
-        try {
-            val lyricRes = ApiClient.metaEnricherApi.getLyrics(
-                LyricQuery(
-                    title = enriched.title,
-                    artist = enriched.artist,
-                    album = enriched.album.ifBlank { null },
-                    durationMs = if (track.durationMs > 0) track.durationMs else null
+        if (enriched.lyricsAvailable) {
+            try {
+                val lyricRes = ApiClient.metaEnricherApi.getLyrics(
+                    LyricQuery(
+                        title = enriched.title,
+                        artist = enriched.artist,
+                        album = enriched.album.ifBlank { null },
+                        durationMs = track.durationMs.takeIf { it > 0 }
+                    )
                 )
-            )
-            if (lyricRes.lyricsAvailable) {
                 val lrcText = lyricRes.syncedLyrics ?: lyricRes.plainLyrics
-                if (!lrcText.isNullOrBlank()) {
+                if (lyricRes.lyricsAvailable && !lrcText.isNullOrBlank()) {
                     lrcFile.writeText(lrcText)
                     lyricsSaved = true
                 }
-            }
-        } catch (_: Exception) {}
+            } catch (_: java.io.IOException) {
+                // The direct lyrics lookup below can still succeed.
+            } catch (_: retrofit2.HttpException) {}
+        }
 
         if (!lyricsSaved) {
             try {
@@ -711,7 +717,8 @@ class DownloadManager private constructor(private val context: Context) {
                             newLanguage = enriched.language,
                             newMood = enriched.mood,
                             newSource = trackSource,
-                            newMetachecked = enriched.metachecked
+                            newMetachecked = enriched.metachecked,
+                            newTrackNumber = enriched.trackNumber
                         )
 
                         exportToPublicMusicFolder(
@@ -765,7 +772,8 @@ class DownloadManager private constructor(private val context: Context) {
             language = enriched.language,
             mood = enriched.mood,
             source = downloadSourceStr,
-            metachecked = enriched.metachecked
+            metachecked = enriched.metachecked,
+            trackNumber = enriched.trackNumber
         )
 
         // Notify Android system MediaScanner

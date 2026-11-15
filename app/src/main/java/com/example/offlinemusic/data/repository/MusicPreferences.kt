@@ -23,7 +23,12 @@ class MusicPreferences(context: Context) {
         private const val KEY_APP_THEME = "key_app_theme"
         private const val KEY_EQUALIZER_ENABLED = "key_equalizer_enabled"
         private const val KEY_EQUALIZER_GAINS = "key_equalizer_gains"
+        private const val KEY_LAST_DYNAMIC_MIX_TIME = "key_last_dynamic_mix_time"
     }
+
+    var lastDynamicMixTimestamp: Long
+        get() = prefs.getLong(KEY_LAST_DYNAMIC_MIX_TIME, 0L)
+        set(value) = prefs.edit().putLong(KEY_LAST_DYNAMIC_MIX_TIME, value).apply()
 
     var downloadSourcePreference: com.example.offlinemusic.downloader.models.DownloadSourceFilter
         get() {

@@ -20,8 +20,39 @@ data class PlayStats(
     val totalDurationMs: Long
 )
 
+data class PlayEventTrackInfo(
+    val trackId: String,
+    val title: String,
+    val artistName: String,
+    val albumTitle: String,
+    val genre: String?,
+    val mood: String?,
+    val language: String?,
+    val playbackTimestamp: Long,
+    val playedDurationMs: Long,
+    val completionStatus: Boolean
+)
+
 @Dao
 interface PlayEventDao {
+
+    @Query("""
+        SELECT pe.track_id AS trackId,
+               t.title AS title,
+               COALESCE(t.artist, 'Unknown Artist') AS artistName,
+               COALESCE(t.album, 'Unknown Album') AS albumTitle,
+               t.genre AS genre,
+               t.mood AS mood,
+               t.language AS language,
+               pe.playback_timestamp AS playbackTimestamp,
+               pe.played_duration_ms AS playedDurationMs,
+               pe.completion_status AS completionStatus
+        FROM play_events pe
+        INNER JOIN tracks t ON pe.track_id = t.id
+        WHERE pe.playback_timestamp >= :sinceTimestamp
+        ORDER BY pe.playback_timestamp DESC
+    """)
+    suspend fun getPlayEventsWithTrackInfo(sinceTimestamp: Long): List<PlayEventTrackInfo>
 
     @Insert
     suspend fun insertPlayEvent(event: PlayEventEntity): Long

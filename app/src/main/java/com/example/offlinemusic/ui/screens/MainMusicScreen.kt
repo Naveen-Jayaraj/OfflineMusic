@@ -63,6 +63,7 @@ fun MainMusicScreen(
     val isFullPlayerVisible by viewModel.isFullPlayerVisible.collectAsState()
     val isSortSheetVisible by viewModel.isSortSheetVisible.collectAsState()
     val likedSongIds by viewModel.likedSongIds.collectAsState()
+    val dynamicPlaylists by viewModel.dynamicPlaylists.collectAsState()
 
     val pendingReviewCount by viewModel.pendingReviewCount.collectAsState()
     val artistReviewPrompt by viewModel.currentArtistReview.collectAsState()
@@ -253,6 +254,7 @@ fun MainMusicScreen(
                             BottomNavTab.HOME -> {
                                 HomeScreen(
                                     playlists = playlists,
+                                    dynamicPlaylists = dynamicPlaylists,
                                     folderName = selectedFolderName,
                                     isLoading = isLoading,
                                     pendingReviewCount = pendingReviewCount,
@@ -260,6 +262,7 @@ fun MainMusicScreen(
                                     isPlaying = isPlaying,
                                     onPlaylistClick = { viewModel.openPlaylistDetail(it) },
                                     onPlayPlaylistClick = { viewModel.playPlaylist(it) },
+                                    onRefreshDynamicMixes = { viewModel.refreshDynamicMixes() },
                                     onNavigateToLibrary = { viewModel.selectTab(BottomNavTab.LIBRARY) },
                                     onRescanClick = { viewModel.rescan() },
                                     onChangeFolderClick = onPickFolderClick,

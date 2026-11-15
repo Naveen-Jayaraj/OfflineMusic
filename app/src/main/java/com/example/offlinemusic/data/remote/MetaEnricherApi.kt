@@ -14,7 +14,10 @@ interface MetaEnricherApi {
 
     // 1. Enrich a single song
     @PUT("song")
-    suspend fun enrichSong(@Body track: TrackEntity): SingleSongResponse
+    suspend fun enrichSong(
+        @Body track: TrackEntity,
+        @Query("youtubeId") youtubeId: String? = null
+    ): SingleSongResponse
 
     // 2. Batch enrich multiple songs
     @PUT("songs")

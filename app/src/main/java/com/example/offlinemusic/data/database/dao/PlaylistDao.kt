@@ -22,7 +22,9 @@ data class PlaylistWithStats(
     @androidx.room.ColumnInfo(name = "folder_source_id")
     val folderSourceId: String?,
     val trackCount: Int,
-    val totalDurationMs: Long
+    val totalDurationMs: Long,
+    @androidx.room.ColumnInfo(name = "created_at")
+    val createdAt: Long = 0L
 )
 
 @Dao
@@ -30,6 +32,7 @@ interface PlaylistDao {
 
     @Query("""
         SELECT p.id, p.name, p.description, p.playlist_type, p.folder_source_id,
+               p.created_at AS created_at,
                COUNT(pt.track_id) AS trackCount,
                COALESCE(SUM(t.duration_ms), 0) AS totalDurationMs,
                COALESCE(p.artwork_uri, (SELECT t2.artwork_uri FROM tracks t2 INNER JOIN playlist_tracks pt2 ON t2.id = pt2.track_id WHERE pt2.playlist_id = p.id AND t2.artwork_uri IS NOT NULL LIMIT 1)) AS artwork_uri
@@ -37,12 +40,13 @@ interface PlaylistDao {
         LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
         LEFT JOIN tracks t ON pt.track_id = t.id
         GROUP BY p.id
-        ORDER BY CASE WHEN p.playlist_type = 'LIKED' THEN 0 WHEN p.playlist_type = 'FOLDER' THEN 1 ELSE 2 END, p.name COLLATE NOCASE ASC
+        ORDER BY CASE WHEN p.playlist_type = 'LIKED' THEN 0 WHEN p.playlist_type = 'DYNAMIC_6H' THEN 1 WHEN p.playlist_type = 'FOLDER' THEN 2 ELSE 3 END, p.name COLLATE NOCASE ASC
     """)
     fun getAllPlaylistsWithStatsFlow(): Flow<List<PlaylistWithStats>>
 
     @Query("""
         SELECT p.id, p.name, p.description, p.playlist_type, p.folder_source_id,
+               p.created_at AS created_at,
                COUNT(pt.track_id) AS trackCount,
                COALESCE(SUM(t.duration_ms), 0) AS totalDurationMs,
                COALESCE(p.artwork_uri, (SELECT t2.artwork_uri FROM tracks t2 INNER JOIN playlist_tracks pt2 ON t2.id = pt2.track_id WHERE pt2.playlist_id = p.id AND t2.artwork_uri IS NOT NULL LIMIT 1)) AS artwork_uri
@@ -50,7 +54,7 @@ interface PlaylistDao {
         LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
         LEFT JOIN tracks t ON pt.track_id = t.id
         GROUP BY p.id
-        ORDER BY CASE WHEN p.playlist_type = 'LIKED' THEN 0 WHEN p.playlist_type = 'FOLDER' THEN 1 ELSE 2 END, p.name COLLATE NOCASE ASC
+        ORDER BY CASE WHEN p.playlist_type = 'LIKED' THEN 0 WHEN p.playlist_type = 'DYNAMIC_6H' THEN 1 WHEN p.playlist_type = 'FOLDER' THEN 2 ELSE 3 END, p.name COLLATE NOCASE ASC
     """)
     suspend fun getAllPlaylistsWithStats(): List<PlaylistWithStats>
 
@@ -62,6 +66,12 @@ interface PlaylistDao {
 
     @Query("SELECT * FROM playlists WHERE playlist_type = :type ORDER BY name COLLATE NOCASE ASC")
     fun getPlaylistsByTypeFlow(type: String): Flow<List<PlaylistEntity>>
+
+    @Query("SELECT * FROM playlists WHERE playlist_type = :type ORDER BY created_at DESC")
+    suspend fun getPlaylistsByType(type: String): List<PlaylistEntity>
+
+    @Query("DELETE FROM playlists WHERE playlist_type = :type")
+    suspend fun deletePlaylistsByType(type: String)
 
     @Query("SELECT * FROM playlists WHERE id = :id LIMIT 1")
     suspend fun getPlaylistById(id: String): PlaylistEntity?

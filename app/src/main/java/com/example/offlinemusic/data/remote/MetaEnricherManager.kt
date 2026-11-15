@@ -218,17 +218,12 @@ class MetaEnricherManager private constructor(private val context: Context) {
                         val single = responseMap[track.id]
                         if (single != null && single.success) {
                             try {
-                                applyEnrichedMetadata(track, single.song, single.lyricsSample)
-                                enrichedCount++
+                                if (applyResponse(track, single) != null) enrichedCount++
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
                                 Log.w(TAG, "Failed applying metadata for ${track.title}: ${e.message}")
-                                db.trackDao().markTrackEnriched(track.id)
                             }
-                        } else {
-                            // Mark as enriched so it is never stuck in infinite retry loop
-                            db.trackDao().markTrackEnriched(track.id)
                         }
                     }
                 } else if (isActive) {
@@ -239,11 +234,10 @@ class MetaEnricherManager private constructor(private val context: Context) {
                         try {
                             val res = enrichTrackInternal(track)
                             if (res != null) enrichedCount++
-                            else db.trackDao().markTrackEnriched(track.id)
                         } catch (e: CancellationException) {
                             throw e
-                        } catch (_: Exception) {
-                            db.trackDao().markTrackEnriched(track.id)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed applying metadata for ${track.title}: ${e.message}")
                         }
                         delay(1000L)
                     }
@@ -289,17 +283,12 @@ class MetaEnricherManager private constructor(private val context: Context) {
         try {
             val sanitized = sanitizeForApi(track)
             val response = ApiClient.metaEnricherApi.enrichSong(sanitized)
-            if (!response.success) {
-                Log.w(TAG, "Server returned success = false for ${track.title}")
-                db.trackDao().markTrackEnriched(track.id)
-                return@withContext null
-            }
-
             _serverStatus.value = ServerStatus.ONLINE
-            applyEnrichedMetadata(track, response.song, response.lyricsSample)
+            applyResponse(track, response)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Error enriching ${track.title}: ${e.message}")
-            db.trackDao().markTrackEnriched(track.id)
             null
         } finally {
             _isEnriching.value = false
@@ -307,13 +296,21 @@ class MetaEnricherManager private constructor(private val context: Context) {
         }
     }
 
+    private suspend fun applyResponse(track: TrackEntity, response: SingleSongResponse): Song? {
+        if (!response.success) return null
+        if (response.audit?.matched == false) {
+            db.trackDao().markTrackLookupMiss(track.id)
+            return null
+        }
+        return applyEnrichedMetadata(track, response.song)
+    }
+
     /**
      * Applies enriched metadata DTO to database, downloads high-res artwork, and saves .lrc lyrics.
      */
     private suspend fun applyEnrichedMetadata(
         track: TrackEntity,
-        songDto: EnrichedSongDto,
-        lyricsSample: String? = null
+        songDto: EnrichedSongDto
     ): Song? {
         val newTitle = songDto.title?.ifBlank { track.title } ?: track.title
         val newArtist = songDto.artist?.ifBlank { track.artist ?: "Unknown Artist" } ?: track.artist ?: "Unknown Artist"
@@ -364,27 +361,26 @@ class MetaEnricherManager private constructor(private val context: Context) {
 
         // 2. Fetch and save line-synced lyrics (.lrc)
         var lyricsAvailable = songDto.lyricsAvailable || track.lyricsAvailable
-        try {
-            val lyricRes = ApiClient.metaEnricherApi.getLyrics(
-                LyricQuery(
-                    title = newTitle,
-                    artist = newArtist,
-                    album = newAlbum,
-                    durationMs = if (track.durationMs > 0) track.durationMs else null
+        if (songDto.lyricsAvailable && track.lyricsUri.isNullOrBlank()) {
+            try {
+                val lyricRes = ApiClient.metaEnricherApi.getLyrics(
+                    LyricQuery(
+                        title = newTitle,
+                        artist = newArtist,
+                        album = newAlbum,
+                        durationMs = track.durationMs.takeIf { it > 0 } ?: songDto.durationMs
+                    )
                 )
-            )
-            if (lyricRes.lyricsAvailable) {
                 val lrcText = lyricRes.syncedLyrics ?: lyricRes.plainLyrics
-                if (!lrcText.isNullOrBlank()) {
+                if (lyricRes.lyricsAvailable && !lrcText.isNullOrBlank()) {
                     lyricsAvailable = true
                     saveLyricsToDisk(track, lrcText)
                 }
-            } else if (!lyricsSample.isNullOrBlank() && lyricsSample.contains("[")) {
-                lyricsAvailable = true
-                saveLyricsToDisk(track, lyricsSample)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed fetching lyrics for $newTitle: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed fetching lyrics for $newTitle: ${e.message}")
         }
 
         // 3. Update database and physical ID3 tags via repository
@@ -402,11 +398,9 @@ class MetaEnricherManager private constructor(private val context: Context) {
             newMood = newMood,
             newSource = newSource,
             newLyricsAvailable = lyricsAvailable,
-            newMetachecked = true
+            newMetachecked = songDto.metachecked,
+            newTrackNumber = songDto.trackNumber
         )
-
-        // Explicitly set confirmed status
-        db.trackDao().markTrackEnriched(track.id)
 
         if (updatedSong != null) {
             withContext(Dispatchers.Main) {

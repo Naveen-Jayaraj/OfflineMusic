@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
@@ -83,12 +84,13 @@ fun LibraryScreen(
 ) {
     var selectedFilter by remember { mutableStateOf(LibraryFilter.ALL) }
 
-    // Separate playlists into liked, recently downloaded, custom, and folder
+    // Separate playlists into liked, recently downloaded, 6h dynamic, custom, and folder
     val likedPlaylist = playlists.firstOrNull { it.isLikedSpecial }
     val downloadedPlaylist = playlists.firstOrNull { it.isRecentlyDownloadedSpecial }
-    val userPlaylists = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && it.playlistType == "USER" }
-    val folderPlaylists = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && it.playlistType == "FOLDER" }
-    val otherPlaylists = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && it.playlistType != "USER" && it.playlistType != "FOLDER" }
+    val dynamicPlaylists = playlists.filter { it.isDynamic6hSpecial }
+    val userPlaylists = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && !it.isDynamic6hSpecial && it.playlistType == "USER" }
+    val folderPlaylists = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && !it.isDynamic6hSpecial && it.playlistType == "FOLDER" }
+    val otherPlaylists = playlists.filter { !it.isLikedSpecial && !it.isRecentlyDownloadedSpecial && !it.isDynamic6hSpecial && it.playlistType != "USER" && it.playlistType != "FOLDER" }
 
     Column(
         modifier = modifier
@@ -219,6 +221,21 @@ fun LibraryScreen(
                         iconTint = MaterialTheme.colorScheme.primary,
                         onClick = { onPlaylistClick(downloadedPlaylist) },
                         onPlayClick = { onPlayPlaylistClick(downloadedPlaylist) }
+                    )
+                }
+            }
+
+            // 6-Hour Dynamic Mixes ("Made For You")
+            if ((selectedFilter == LibraryFilter.ALL || selectedFilter == LibraryFilter.PLAYLISTS) && dynamicPlaylists.isNotEmpty()) {
+                items(dynamicPlaylists, key = { it.id }) { playlist ->
+                    LibraryItemRow(
+                        title = playlist.name,
+                        subtitle = "⚡ 6h Mix • Refreshes in ${playlist.remainingExpiryFormatted} • ${playlist.songCount} songs",
+                        artworkUri = playlist.artworkUri,
+                        icon = Icons.Default.AutoAwesome,
+                        iconTint = MaterialTheme.colorScheme.primary,
+                        onClick = { onPlaylistClick(playlist) },
+                        onPlayClick = { onPlayPlaylistClick(playlist) }
                     )
                 }
             }

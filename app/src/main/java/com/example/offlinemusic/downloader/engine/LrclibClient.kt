@@ -2,6 +2,7 @@ package com.example.offlinemusic.downloader.engine
 
 import com.example.offlinemusic.downloader.models.LyricsLine
 import com.example.offlinemusic.downloader.models.SyncedLyrics
+import com.example.offlinemusic.data.repository.ArtistNormalizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -12,12 +13,12 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
+import kotlin.math.abs
 
 object LrclibClient {
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .callTimeout(6, TimeUnit.SECONDS)
         .build()
 
     private val LRC_PATTERN = Pattern.compile("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\](.*)")
@@ -28,82 +29,73 @@ object LrclibClient {
         album: String? = null,
         durationSeconds: Number? = null
     ): SyncedLyrics? = withContext(Dispatchers.IO) {
-        val cleanTitle = cleanTitle(title)
-        val cleanArtist = cleanArtist(artist)
+        val searchTitle = MetadataEnricher.cleanTrackTitle(title)
+        val artists = ArtistNormalizer.splitCollaborators(artist)
+            .map(MetadataEnricher::cleanArtistName)
+            .filter { it.isNotBlank() && !it.equals("Unknown Artist", ignoreCase = true) }
+        val primaryArtist = artists.firstOrNull() ?: return@withContext null
+        if (searchTitle.isBlank()) return@withContext null
 
-        // 1. Try exact /api/get if artist is known
-        if (cleanArtist.isNotBlank()) {
-            val urlBuilder = "https://lrclib.net/api/get".toHttpUrlOrNull()?.newBuilder()
-            urlBuilder?.addQueryParameter("track_name", cleanTitle)
-            urlBuilder?.addQueryParameter("artist_name", cleanArtist)
-            if (!album.isNullOrBlank() && album != "Single") {
-                urlBuilder?.addQueryParameter("album_name", album)
+        val url = "https://lrclib.net/api/search".toHttpUrlOrNull()!!.newBuilder()
+            .addQueryParameter("track_name", searchTitle)
+            .addQueryParameter("artist_name", primaryArtist)
+            .build()
+        val request = Request.Builder().url(url)
+            .header("User-Agent", "OfflineMusic/1.0.0 (Android)")
+            .build()
+        try {
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                if (!response.isSuccessful || body.isNullOrBlank()) return@withContext null
+                selectLyrics(JSONArray(body), searchTitle, artists, album, durationSeconds?.toDouble())
             }
-            if (durationSeconds != null && durationSeconds.toDouble() > 0) {
-                urlBuilder?.addQueryParameter("duration", durationSeconds.toInt().toString())
-            }
-
-            urlBuilder?.build()?.let { url ->
-                val request = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", "OfflineMusic/1.0.0 ( Android )")
-                    .build()
-
-                try {
-                    httpClient.newCall(request).execute().use { resp ->
-                        if (resp.isSuccessful) {
-                            val body = resp.body?.string()
-                            if (!body.isNullOrBlank()) {
-                                val json = JSONObject(body)
-                                val plain = json.optString("plainLyrics", "").takeIf { it.isNotBlank() }
-                                val synced = json.optString("syncedLyrics", "").takeIf { it.isNotBlank() }
-                                if (plain != null || synced != null) {
-                                    return@withContext parseSyncedLyrics(synced, plain)
-                                }
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
+        } catch (_: java.io.IOException) {
+            null
+        } catch (_: org.json.JSONException) {
+            null
         }
-
-        // 2. Fallback to /api/search with query
-        val searchBuilder = "https://lrclib.net/api/search".toHttpUrlOrNull()?.newBuilder()
-        if (cleanArtist.isNotBlank()) {
-            searchBuilder?.addQueryParameter("track_name", cleanTitle)
-            searchBuilder?.addQueryParameter("artist_name", cleanArtist)
-        } else {
-            searchBuilder?.addQueryParameter("q", "$cleanTitle $cleanArtist".trim())
-        }
-
-        searchBuilder?.build()?.let { url ->
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "OfflineMusic/1.0.0 ( Android )")
-                .build()
-
-            try {
-                httpClient.newCall(request).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val body = resp.body?.string()
-                        if (!body.isNullOrBlank()) {
-                            val arr = JSONArray(body)
-                            if (arr.length() > 0) {
-                                val first = arr.getJSONObject(0)
-                                val plain = first.optString("plainLyrics", "").takeIf { it.isNotBlank() }
-                                val synced = first.optString("syncedLyrics", "").takeIf { it.isNotBlank() }
-                                if (plain != null || synced != null) {
-                                    return@withContext parseSyncedLyrics(synced, plain)
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-
-        null
     }
+
+    private fun selectLyrics(
+        tracks: JSONArray,
+        title: String,
+        artists: List<String>,
+        album: String?,
+        duration: Double?
+    ): SyncedLyrics? {
+        val titleKey = ArtistNormalizer.normalize(title)
+        val artistKeys = artists.map(ArtistNormalizer::normalize).toSet()
+        val albumKey = album?.let(ArtistNormalizer::normalize)
+        val expectedDuration = duration?.takeIf { it > 0 }
+        var bestScore = Int.MIN_VALUE
+        var lyrics: SyncedLyrics? = null
+        for (index in 0 until tracks.length()) {
+            val track = tracks.optJSONObject(index) ?: continue
+            if (ArtistNormalizer.normalize(track.optString("trackName")) != titleKey) continue
+            val credits = ArtistNormalizer.splitCollaborators(track.optString("artistName"))
+            if (credits.none { ArtistNormalizer.normalize(it) in artistKeys }) continue
+            val candidateDuration = track.optDouble("duration").takeIf { it.isFinite() && it > 0 }
+            val difference = expectedDuration?.let { expected -> candidateDuration?.let { abs(it - expected) } }
+            if (difference != null && difference > 12) continue
+            val plain = track.lyricsText("plainLyrics")
+            val synced = track.lyricsText("syncedLyrics")
+                ?.takeIf { expectedDuration == null || (difference != null && difference <= 3) }
+            if (plain == null && synced == null) continue
+
+            val sameAlbum = !albumKey.isNullOrEmpty() &&
+                ArtistNormalizer.normalize(track.optString("albumName")) == albumKey
+            val score = (if (synced != null) 100 else 0) +
+                (if (sameAlbum) 20 else 0) - (difference?.toInt() ?: 4)
+            if (score > bestScore) {
+                bestScore = score
+                lyrics = parseSyncedLyrics(synced, plain)
+            }
+        }
+        return lyrics
+    }
+
+    private fun JSONObject.lyricsText(key: String): String? =
+        optString(key).takeIf { !isNull(key) && it.isNotBlank() }
 
     /**
      * Parse standard .lrc format: "[00:15.30] Line lyrics"
@@ -163,24 +155,6 @@ object LrclibClient {
         } catch (_: Exception) {
             null
         }
-    }
-
-    fun cleanTitle(title: String): String {
-        var s = title.replace(Regex("[\\u2013\\u2014\\u2212]"), "-")
-        for (ext in listOf(".mp3", ".flac", ".m4a", ".opus", ".wav", ".aac", ".ogg")) {
-            if (s.lowercase().endsWith(ext)) {
-                s = s.substring(0, s.length - ext.length)
-            }
-        }
-        return s.replace(Regex("(?i)\\b(official\\s*video|official\\s*audio|lyrics|lyric\\s*video|hd|hq|4k|audio)\\b"), "")
-            .replace("[]", "")
-            .replace("()", "")
-            .trim()
-    }
-
-    fun cleanArtist(artist: String): String {
-        return artist.replace(Regex("(?i)\\b(vevo|official|channel|records|music)\\b"), "")
-            .trim()
     }
 
     fun saveToLrcFile(lyrics: SyncedLyrics, file: File) {

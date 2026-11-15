@@ -246,10 +246,11 @@ fun MetadataEditorDialog(
                                         durationMs = song.durationMs,
                                         fileUri = song.uri.toString(),
                                         artist = artistString.ifBlank { song.artist },
-                                        album = album.ifBlank { song.album }
+                                        album = album.ifBlank { song.album },
+                                        year = yearText.toIntOrNull()
                                     )
                                     val response = ApiClient.metaEnricherApi.enrichSong(dummyTrack)
-                                    if (response.success) {
+                                    if (response.success && response.audit?.matched != false) {
                                         val s = response.song
                                         title = s.title?.ifBlank { title } ?: title
                                         artistString = s.artist?.ifBlank { artistString } ?: artistString
@@ -298,27 +299,32 @@ fun MetadataEditorDialog(
                                         }
 
                                         // Auto-fetch & save lyrics as well
-                                        try {
-                                            val lrcQuery = LyricQuery(
-                                                title = title,
-                                                artist = artistString,
-                                                album = album.ifEmpty { null },
-                                                durationMs = if (song.durationMs > 0) song.durationMs else null
-                                            )
-                                            val lrcResp = ApiClient.metaEnricherApi.getLyrics(lrcQuery)
-                                            if (lrcResp.lyricsAvailable && (!lrcResp.syncedLyrics.isNullOrBlank() || !lrcResp.plainLyrics.isNullOrBlank())) {
-                                                val lrcContent = lrcResp.syncedLyrics ?: lrcResp.plainLyrics!!
-                                                withContext(Dispatchers.IO) {
-                                                    MusicRepository(context).saveLyricsForTrack(song.id, lrcContent)
+                                        if (s.lyricsAvailable && !lyricsAvailable) {
+                                            try {
+                                                val lrcQuery = LyricQuery(
+                                                    title = title,
+                                                    artist = artistString,
+                                                    album = album.ifEmpty { null },
+                                                    durationMs = song.durationMs.takeIf { it > 0 } ?: s.durationMs
+                                                )
+                                                val lrcResp = ApiClient.metaEnricherApi.getLyrics(lrcQuery)
+                                                val content = lrcResp.syncedLyrics ?: lrcResp.plainLyrics
+                                                if (lrcResp.lyricsAvailable && !content.isNullOrBlank()) {
+                                                    withContext(Dispatchers.IO) {
+                                                        MusicRepository(context).saveLyricsForTrack(song.id, content)
+                                                    }
+                                                    lyricsAvailable = true
                                                 }
-                                                lyricsAvailable = true
-                                            }
-                                        } catch (_: Exception) {}
+                                            } catch (_: java.io.IOException) {
+                                            } catch (_: retrofit2.HttpException) {}
+                                        }
 
                                         lyricsAvailable = s.lyricsAvailable || lyricsAvailable
-                                        metachecked = true
-                                        val score = ((response.audit?.confidenceScore ?: 0.9f) * 100).toInt()
-                                        autoEnrichMessage = "✨ Auto-Enriched! ($score% confidence)"
+                                        metachecked = s.metachecked
+                                        autoEnrichMessage = response.audit?.let {
+                                            val score = (it.confidenceScore * 100).toInt()
+                                            "Metadata found ($score% match)"
+                                        } ?: "Metadata found"
                                     } else {
                                         autoEnrichMessage = "No deep search match found."
                                     }

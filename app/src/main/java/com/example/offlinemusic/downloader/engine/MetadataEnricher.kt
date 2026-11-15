@@ -3,6 +3,7 @@ package com.example.offlinemusic.downloader.engine
 import android.util.Log
 import com.example.offlinemusic.data.database.entities.TrackEntity
 import com.example.offlinemusic.data.remote.ApiClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.regex.Pattern
@@ -20,7 +21,8 @@ data class EnrichedMetadata(
     val mood: String? = null,
     val lyricsAvailable: Boolean = false,
     val lyricsUri: String? = null,
-    val metachecked: Boolean = false
+    val metachecked: Boolean = false,
+    val trackNumber: Int? = null
 )
 
 object MetadataEnricher {
@@ -36,8 +38,8 @@ object MetadataEnricher {
         Pattern.compile("(?i)\\[(?:official\\s+)?lyric\\s+video\\]"),
         Pattern.compile("(?i)\\((?:lyrics?|lyric\\s+video)\\)"),
         Pattern.compile("(?i)\\[(?:lyrics?|lyric\\s+video)\\]"),
-        Pattern.compile("(?i)\\((?:visualizer|audio|hd|4k|sped\\s+up|slowed\\s*\\+?\\s*reverb)\\)"),
-        Pattern.compile("(?i)\\[(?:visualizer|audio|hd|4k|sped\\s+up|slowed\\s*\\+?\\s*reverb)\\]")
+        Pattern.compile("(?i)\\((?:visualizer|audio|hd|4k)\\)"),
+        Pattern.compile("(?i)\\[(?:visualizer|audio|hd|4k)\\]")
     )
 
     /**
@@ -110,7 +112,9 @@ object MetadataEnricher {
         rawTitle: String,
         rawArtist: String?,
         fallbackThumbnailUrl: String?,
-        durationMs: Long = 0L
+        durationMs: Long = 0L,
+        album: String? = null,
+        youtubeId: String? = null
     ): EnrichedMetadata = withContext(Dispatchers.IO) {
         val (parsedTitle, inferredArtist) = parseArtistAndTitle(rawTitle, rawArtist)
         val finalTitle = parsedTitle.ifBlank { rawTitle.trim() }
@@ -120,22 +124,23 @@ object MetadataEnricher {
             val dummyId = "dl_${finalTitle.hashCode().toUInt().toString(16)}"
             val dummyTrack = TrackEntity(
                 id = dummyId,
-                title = finalTitle,
-                normalizedTitle = finalTitle.lowercase(),
+                title = rawTitle.ifBlank { finalTitle },
+                normalizedTitle = rawTitle.lowercase(),
                 durationMs = durationMs,
                 fileUri = "file:///temp_download.mp3",
-                artist = finalArtist,
+                artist = rawArtist?.ifBlank { "Unknown Artist" } ?: "Unknown Artist",
+                album = album,
                 artworkUri = fallbackThumbnailUrl
             )
 
-            val response = ApiClient.metaEnricherApi.enrichSong(dummyTrack)
-            if (response.success) {
+            val response = ApiClient.metaEnricherApi.enrichSong(dummyTrack, youtubeId)
+            if (response.success && response.audit?.matched != false) {
                 val song = response.song
                 Log.i(TAG, "MetaEnricher enriched: ${song.title} - ${song.artist}")
                 return@withContext EnrichedMetadata(
                     title = song.title?.ifBlank { finalTitle } ?: finalTitle,
                     artist = song.artist?.ifBlank { finalArtist } ?: finalArtist,
-                    album = song.album?.ifBlank { "Downloads" } ?: "Downloads",
+                    album = song.album?.takeIf { it.isNotBlank() } ?: album.orEmpty().ifBlank { "Downloads" },
                     year = song.year,
                     genre = song.genre,
                     artworkUrl = song.artworkUri ?: fallbackThumbnailUrl,
@@ -145,9 +150,12 @@ object MetadataEnricher {
                     mood = song.mood,
                     lyricsAvailable = song.lyricsAvailable,
                     lyricsUri = song.lyricsUri,
-                    metachecked = true
+                    metachecked = song.metachecked,
+                    trackNumber = song.trackNumber
                 )
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "MetaEnricher remote query failed, fallback used: ${e.message}")
         }
@@ -156,7 +164,7 @@ object MetadataEnricher {
         EnrichedMetadata(
             title = finalTitle,
             artist = finalArtist,
-            album = "Downloads",
+            album = album.orEmpty().ifBlank { "Downloads" },
             year = null,
             genre = null,
             artworkUrl = fallbackThumbnailUrl,
