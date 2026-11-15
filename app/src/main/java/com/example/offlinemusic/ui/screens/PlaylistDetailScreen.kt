@@ -3,6 +3,7 @@ package com.example.offlinemusic.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -39,15 +41,20 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +63,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,7 +76,20 @@ import com.example.offlinemusic.ui.components.EditPlaylistDescriptionDialog
 import com.example.offlinemusic.ui.components.EditPlaylistNameDialog
 import com.example.offlinemusic.ui.components.EqualizerBars
 
-@OptIn(ExperimentalFoundationApi::class)
+enum class PlaylistSortOption(val displayName: String, val subtitle: String) {
+    DEFAULT("Default Order", "Original playlist order"),
+    TIME_ADDED_DESC("Recently Added", "Newest added to playlist first"),
+    TIME_ADDED_ASC("Oldest Added", "First added to playlist first"),
+    TIME_DOWNLOADED_DESC("Recently Downloaded", "Newest downloaded files first"),
+    TIME_DOWNLOADED_ASC("Oldest Downloaded", "Earliest downloaded files first"),
+    MOST_LISTENED("Most Listened", "Sorted by total play count"),
+    BY_GENRE("By Genre", "Grouped alphabetically by genre"),
+    BY_MOOD("By Mood", "Grouped by mood category"),
+    BY_TITLE("By Title (A-Z)", "Alphabetical by song title"),
+    BY_ARTIST("By Artist (A-Z)", "Alphabetical by artist name")
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistDetailScreen(
     playlist: Playlist,
@@ -101,6 +120,31 @@ fun PlaylistDetailScreen(
     var showEditDescriptionDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var songToDelete by remember { mutableStateOf<Song?>(null) }
+    var selectedSortOption by remember { mutableStateOf(PlaylistSortOption.DEFAULT) }
+    var showSortSheet by remember { mutableStateOf(false) }
+
+    val sortedSongs = remember(playlist.songs, selectedSortOption) {
+        when (selectedSortOption) {
+            PlaylistSortOption.DEFAULT -> playlist.songs
+            PlaylistSortOption.TIME_ADDED_DESC -> playlist.songs.sortedByDescending { it.playlistAddedTimestamp ?: it.dateAdded }
+            PlaylistSortOption.TIME_ADDED_ASC -> playlist.songs.sortedBy { it.playlistAddedTimestamp ?: it.dateAdded }
+            PlaylistSortOption.TIME_DOWNLOADED_DESC -> playlist.songs.sortedByDescending { it.dateModified }
+            PlaylistSortOption.TIME_DOWNLOADED_ASC -> playlist.songs.sortedBy { it.dateModified }
+            PlaylistSortOption.MOST_LISTENED -> playlist.songs.sortedWith(
+                compareByDescending<Song> { it.playCount }.thenBy { it.title.lowercase() }
+            )
+            PlaylistSortOption.BY_GENRE -> playlist.songs.sortedWith(
+                compareBy<Song> { it.genre.isNullOrBlank() }.thenBy { it.genre?.lowercase() }.thenBy { it.title.lowercase() }
+            )
+            PlaylistSortOption.BY_MOOD -> playlist.songs.sortedWith(
+                compareBy<Song> { it.mood.isNullOrBlank() }.thenBy { it.mood?.lowercase() }.thenBy { it.title.lowercase() }
+            )
+            PlaylistSortOption.BY_TITLE -> playlist.songs.sortedBy { it.title.lowercase() }
+            PlaylistSortOption.BY_ARTIST -> playlist.songs.sortedWith(
+                compareBy<Song> { it.artist.lowercase() }.thenBy { it.title.lowercase() }
+            )
+        }
+    }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -187,8 +231,8 @@ fun PlaylistDetailScreen(
                     },
                     contentDescription = null,
                     tint = when {
-                        isLikedSpecial -> Color(0xFFE91E63)
-                        isRecentlyDownloadedSpecial -> Color(0xFF00E676)
+                        isLikedSpecial -> MaterialTheme.colorScheme.tertiary
+                        isRecentlyDownloadedSpecial -> MaterialTheme.colorScheme.primary
                         isFolder -> MaterialTheme.colorScheme.primary
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
@@ -305,20 +349,14 @@ fun PlaylistDetailScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(
-                                        Brush.linearGradient(
-                                            colors = listOf(
-                                                Color(0xFFE91E63),
-                                                Color(0xFF9C27B0),
-                                                Color(0xFF3F51B5)
-                                            )
-                                        )
+                                        MaterialTheme.colorScheme.tertiaryContainer
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Favorite,
                                     contentDescription = "Liked Songs",
-                                    tint = Color.White,
+                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
                                     modifier = Modifier.size(68.dp)
                                 )
                             }
@@ -327,20 +365,14 @@ fun PlaylistDetailScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(
-                                        Brush.linearGradient(
-                                            colors = listOf(
-                                                Color(0xFF00E676),
-                                                Color(0xFF00B0FF),
-                                                Color(0xFF304FFE)
-                                            )
-                                        )
+                                        MaterialTheme.colorScheme.primaryContainer
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.DownloadDone,
                                     contentDescription = "Recently Downloaded",
-                                    tint = Color.White,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                     modifier = Modifier.size(68.dp)
                                 )
                             }
@@ -397,8 +429,8 @@ fun PlaylistDetailScreen(
                             },
                             contentDescription = null,
                             tint = when {
-                                isLikedSpecial -> Color(0xFFE91E63)
-                                isRecentlyDownloadedSpecial -> Color(0xFF00E676)
+                                isLikedSpecial -> MaterialTheme.colorScheme.tertiary
+                                isRecentlyDownloadedSpecial -> MaterialTheme.colorScheme.primary
                                 isFolder -> MaterialTheme.colorScheme.primary
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
@@ -455,7 +487,7 @@ fun PlaylistDetailScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Actions Row: Play, Shuffle, and 3-dot More Options Button
-                    val isPlaylistPlaying = isPlaying && currentSong != null && playlist.songs.any { it.id == currentSong.id }
+                    val isPlaylistPlaying = isPlaying && currentSong != null && sortedSongs.any { it.id == currentSong.id }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -463,8 +495,18 @@ fun PlaylistDetailScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Button(
-                            onClick = if (isPlaylistPlaying) onPauseClick else onPlayAllClick,
-                            enabled = playlist.songs.isNotEmpty(),
+                            onClick = {
+                                if (isPlaylistPlaying) {
+                                    onPauseClick()
+                                } else if (sortedSongs.isNotEmpty()) {
+                                    if (selectedSortOption == PlaylistSortOption.DEFAULT) {
+                                        onPlayAllClick()
+                                    } else {
+                                        onSongClick(sortedSongs.first(), sortedSongs)
+                                    }
+                                }
+                            },
+                            enabled = sortedSongs.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
                                 contentColor = MaterialTheme.colorScheme.onPrimary
@@ -488,8 +530,15 @@ fun PlaylistDetailScreen(
                         }
 
                         OutlinedButton(
-                            onClick = onShuffleAllClick,
-                            enabled = playlist.songs.isNotEmpty(),
+                            onClick = {
+                                if (sortedSongs.isNotEmpty()) {
+                                    val shuffled = sortedSongs.shuffled()
+                                    onSongClick(shuffled.first(), shuffled)
+                                } else {
+                                    onShuffleAllClick()
+                                }
+                            },
+                            enabled = sortedSongs.isNotEmpty(),
                             shape = RoundedCornerShape(24.dp),
                             modifier = Modifier
                                 .weight(1f)
@@ -601,27 +650,71 @@ fun PlaylistDetailScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 4.dp),
+                        .padding(top = 10.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = "TRACKS",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            letterSpacing = 1.5.sp,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "${playlist.songs.size} items",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "TRACKS",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                letterSpacing = 1.5.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "• ${sortedSongs.size} items",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+
+                    // Sort button pill
+                    Surface(
+                        onClick = { showSortSheet = true },
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (selectedSortOption == PlaylistSortOption.DEFAULT)
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        else
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (selectedSortOption == PlaylistSortOption.DEFAULT)
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                            else
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Sort,
+                                contentDescription = "Sort playlist",
+                                modifier = Modifier.size(15.dp),
+                                tint = if (selectedSortOption == PlaylistSortOption.DEFAULT)
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                else
+                                    MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = selectedSortOption.displayName,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = if (selectedSortOption == PlaylistSortOption.DEFAULT)
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                else
+                                    MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 }
             }
 
-            if (playlist.songs.isEmpty()) {
+            if (sortedSongs.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
@@ -641,7 +734,7 @@ fun PlaylistDetailScreen(
                     }
                 }
             } else {
-                itemsIndexed(playlist.songs, key = { _, s -> s.id }) { index, song ->
+                itemsIndexed(sortedSongs, key = { _, s -> s.id }) { index, song ->
                     val isCurrent = currentSong?.id == song.id
                     var songMenuExpanded by remember { mutableStateOf(false) }
 
@@ -654,7 +747,7 @@ fun PlaylistDetailScreen(
                                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                             )
                             .combinedClickable(
-                                onClick = { onSongClick(song, playlist.songs) },
+                                onClick = { onSongClick(song, sortedSongs) },
                                 onLongClick = { songMenuExpanded = true }
                             )
                             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -697,8 +790,15 @@ fun PlaylistDetailScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Spacer(modifier = Modifier.height(2.dp))
+                            val secondaryInfo = when (selectedSortOption) {
+                                PlaylistSortOption.MOST_LISTENED -> "${song.artist} • ${song.playCount} plays"
+                                PlaylistSortOption.BY_GENRE -> if (!song.genre.isNullOrBlank()) "${song.artist} • ${song.genre}" else song.artist
+                                PlaylistSortOption.BY_MOOD -> if (!song.mood.isNullOrBlank()) "${song.artist} • ${song.mood}" else song.artist
+                                PlaylistSortOption.TIME_DOWNLOADED_DESC, PlaylistSortOption.TIME_DOWNLOADED_ASC -> "${song.artist} • ${song.formattedSize}"
+                                else -> song.artist
+                            }
                             Text(
-                                text = song.artist,
+                                text = secondaryInfo,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -811,6 +911,103 @@ fun PlaylistDetailScreen(
                 },
                 onDismiss = { songToDelete = null }
             )
+        }
+
+        if (showSortSheet) {
+            PlaylistSortBottomSheet(
+                currentSort = selectedSortOption,
+                onSortSelected = { selectedSortOption = it },
+                onDismiss = { showSortSheet = false }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlaylistSortBottomSheet(
+    currentSort: PlaylistSortOption,
+    onSortSelected: (PlaylistSortOption) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 36.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Sort Playlist",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            PlaylistSortOption.values().forEach { option ->
+                val isSelected = currentSort == option
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                            else Color.Transparent
+                        )
+                        .clickable {
+                            onSortSelected(option)
+                            onDismiss()
+                        }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = option.displayName,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            ),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = option.subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Selected",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+            }
         }
     }
 }

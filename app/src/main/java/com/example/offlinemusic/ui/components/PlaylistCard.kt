@@ -30,7 +30,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,48 +64,36 @@ fun PlaylistCard(
                 .clip(RoundedCornerShape(12.dp))
         ) {
             if (isLiked) {
-                // Heart Gradient for Liked Songs
+                // Warm clay cover for liked songs
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    Color(0xFFE91E63),
-                                    Color(0xFF9C27B0),
-                                    Color(0xFF3F51B5)
-                                )
-                            )
+                            MaterialTheme.colorScheme.tertiaryContainer
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Favorite,
                         contentDescription = "Liked Songs",
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
                         modifier = Modifier.size(54.dp)
                     )
                 }
             } else if (playlist.isRecentlyDownloadedSpecial) {
-                // Cool Download Gradient for Recently Downloaded
+                // Sage cover for recent downloads
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    Color(0xFF00E676), // Vibrant Neon Emerald
-                                    Color(0xFF00B0FF), // Electric Cyan
-                                    Color(0xFF304FFE)  // Deep Indigo
-                                )
-                            )
+                            MaterialTheme.colorScheme.primaryContainer
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.DownloadDone,
                         contentDescription = "Recently Downloaded",
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.size(54.dp)
                     )
                 }
@@ -170,7 +157,7 @@ fun PlaylistCard(
                 },
                 contentDescription = null,
                 tint = when {
-                    isLiked -> Color(0xFFE91E63)
+                    isLiked -> MaterialTheme.colorScheme.tertiary
                     isFolder -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },

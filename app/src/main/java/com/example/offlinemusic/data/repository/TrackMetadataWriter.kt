@@ -33,11 +33,24 @@ object TrackMetadataWriter {
             tempOut = File(cacheDir, "temp_tag_out_${System.currentTimeMillis()}.mp3")
 
             // 1. Copy original audio file stream to a cache file
-            val copied = context.contentResolver.openInputStream(trackUri)?.use { input ->
-                tempIn.outputStream().use { output ->
-                    input.copyTo(output) > 0
-                }
-            } ?: false
+            val isDirectFile = trackUri.scheme == "file" || trackUri.scheme.isNullOrEmpty()
+            val copied = if (isDirectFile) {
+                val decodedPath = Uri.decode(trackUri.path ?: "")
+                val srcFile = File(decodedPath).takeIf { it.exists() } ?: File(trackUri.path ?: "")
+                if (srcFile.exists() && srcFile.length() > 0L) {
+                    srcFile.inputStream().use { input ->
+                        tempIn.outputStream().use { output ->
+                            input.copyTo(output) > 0
+                        }
+                    }
+                } else false
+            } else {
+                context.contentResolver.openInputStream(trackUri)?.use { input ->
+                    tempIn.outputStream().use { output ->
+                        input.copyTo(output) > 0
+                    }
+                } ?: false
+            }
 
             if (!copied || !tempIn.exists() || tempIn.length() == 0L) {
                 Log.w(TAG, "Failed to copy audio stream to cache for $trackUri")
@@ -72,15 +85,35 @@ object TrackMetadataWriter {
             // 3. Save modified MP3
             mp3File.save(tempOut.absolutePath)
 
-            // 4. Stream back to original physical file via SAF
+            // 4. Stream back to original physical file (Direct File or SAF ContentResolver)
             if (tempOut.exists() && tempOut.length() > 0L) {
-                context.contentResolver.openOutputStream(trackUri, "wt")?.use { output ->
+                val written = if (isDirectFile) {
+                    val decodedPath = Uri.decode(trackUri.path ?: "")
+                    val destFile = File(decodedPath).takeIf { it.exists() } ?: File(trackUri.path ?: "")
                     tempOut.inputStream().use { input ->
-                        input.copyTo(output)
+                        destFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
                     }
+                    true
+                } else {
+                    val outStream = context.contentResolver.openOutputStream(trackUri, "wt")
+                    if (outStream != null) {
+                        outStream.use { output ->
+                            tempOut.inputStream().use { input ->
+                                input.copyTo(output)
+                            }
+                        }
+                        true
+                    } else false
                 }
-                Log.d(TAG, "Successfully updated physical ID3 tags for $trackUri")
-                true
+                if (written) {
+                    Log.d(TAG, "Successfully updated physical ID3 tags for $trackUri")
+                    true
+                } else {
+                    Log.w(TAG, "Failed writing modified ID3 stream back to $trackUri")
+                    false
+                }
             } else {
                 Log.w(TAG, "Temp output file not generated or empty for $trackUri")
                 false

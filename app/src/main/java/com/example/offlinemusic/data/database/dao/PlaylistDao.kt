@@ -94,10 +94,10 @@ interface PlaylistDao {
     suspend fun deletePlaylistById(playlistId: String)
 
     // Playlist tracks
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylistTracks(playlistTracks: List<PlaylistTrackEntity>)
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylistTrack(playlistTrack: PlaylistTrackEntity)
 
     @Query("""
@@ -121,6 +121,9 @@ interface PlaylistDao {
 
     @Query("SELECT COALESCE(MAX(position), 0) FROM playlist_tracks WHERE playlist_id = :playlistId")
     suspend fun getMaxPlaylistPosition(playlistId: String): Int
+
+    @Query("SELECT COALESCE(MIN(position), 0) FROM playlist_tracks WHERE playlist_id = :playlistId")
+    suspend fun getMinPlaylistPosition(playlistId: String): Int
 
     @Query("DELETE FROM playlist_tracks WHERE playlist_id = :playlistId AND track_id = :trackId")
     suspend fun removeTrackFromPlaylist(playlistId: String, trackId: String)

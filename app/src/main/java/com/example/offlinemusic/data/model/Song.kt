@@ -17,7 +17,17 @@ data class Song(
     val relativePath: String,
     val trackNumber: Int? = null,
     val artworkUri: Uri? = null,
-    val lyricsUri: String? = null
+    val lyricsUri: String? = null,
+    val producer: String? = null,
+    val composer: String? = null,
+    val language: String? = null,
+    val mood: String? = null,
+    val source: String = "LOCAL",
+    val lyricsAvailable: Boolean = false,
+    val metachecked: Boolean = false,
+    val dateAdded: Long = 0L,
+    val playCount: Int = 0,
+    val playlistAddedTimestamp: Long? = null
 ) {
     val formattedDuration: String
         get() {

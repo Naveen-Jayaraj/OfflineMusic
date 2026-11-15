@@ -164,7 +164,7 @@ fun ArtistProfileScreen(
                             Text(
                                 text = artistProfile.name,
                                 style = MaterialTheme.typography.titleLarge.copy(
-                                    fontWeight = FontWeight.Black
+                                    fontWeight = FontWeight.SemiBold
                                 ),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 maxLines = 1,

@@ -543,7 +543,7 @@ private fun HistoricalDownloadCard(
                             Icon(
                                 imageVector = Icons.Default.CheckCircle,
                                 contentDescription = "Completed",
-                                tint = Color(0xFF4CAF50),
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(13.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
@@ -560,7 +560,7 @@ private fun HistoricalDownloadCard(
                                     }
                                 },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF4CAF50)
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
                     }
@@ -593,7 +593,7 @@ private fun HistoricalDownloadCard(
                         Text(
                             text = "Duplicate skipped",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFFF9800)
+                            color = MaterialTheme.colorScheme.tertiary
                         )
                     }
                     else -> {

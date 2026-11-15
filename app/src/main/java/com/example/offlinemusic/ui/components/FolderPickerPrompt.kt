@@ -61,22 +61,14 @@ fun FolderPickerPrompt(
                     .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.FolderOpen,
-                    contentDescription = null,
-                    modifier = Modifier.size(44.dp),
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
+                BrandMark(modifier = Modifier.size(72.dp))
             }
 
             Spacer(modifier = Modifier.height(28.dp))
 
             Text(
-                text = "SELECT MUSIC DIRECTORY",
-                style = MaterialTheme.typography.titleMedium.copy(
-                    letterSpacing = 2.sp,
-                    fontWeight = FontWeight.Bold
-                ),
+                text = "Make yourself at home",
+                style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center
             )
@@ -84,7 +76,7 @@ fun FolderPickerPrompt(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Choose your phone's music folder. All songs will be loaded, and every subfolder inside will automatically become an Album.",
+                text = "Bring your music along. Choose a folder and BitTune will gather your songs and albums, ready to play offline.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -141,9 +133,8 @@ fun FolderPickerPrompt(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "SELECT DEFAULT FOLDER",
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
+                    text = "Choose music folder",
+                    style = MaterialTheme.typography.labelLarge
                 )
             }
         }

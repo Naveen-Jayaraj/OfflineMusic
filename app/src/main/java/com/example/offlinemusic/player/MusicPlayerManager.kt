@@ -11,6 +11,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.offlinemusic.data.repository.MusicRepository
 import com.example.offlinemusic.data.model.Song
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,7 +26,11 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
     private val repository = MusicRepository(context)
     private var mediaController: MediaController? = null
-    private val scope = CoroutineScope(Dispatchers.Main)
+
+    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        android.util.Log.e("MusicPlayerManager", "Unhandled coroutine error", throwable)
+    }
+    private val scope = CoroutineScope(Dispatchers.Main + coroutineExceptionHandler)
     private var progressJob: Job? = null
 
     private var activeTrackId: String? = null
@@ -40,6 +45,12 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
     private val _currentPositionMs = MutableStateFlow(0L)
     val currentPositionMs: StateFlow<Long> = _currentPositionMs.asStateFlow()
+
+    private val _bufferedPositionMs = MutableStateFlow(0L)
+    val bufferedPositionMs: StateFlow<Long> = _bufferedPositionMs.asStateFlow()
+
+    private val _isBuffering = MutableStateFlow(false)
+    val isBuffering: StateFlow<Boolean> = _isBuffering.asStateFlow()
 
     private val _durationMs = MutableStateFlow(0L)
     val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
@@ -148,6 +159,12 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
     private fun commitCurrentPlayEvent() {
         val trackId = activeTrackId ?: return
+        if (trackId.startsWith("stream_")) {
+            // Online stream tracks do not exist in local SQLite tracks table
+            trackPlayStartTimeMs = 0L
+            accumulatedPlayedMs = 0L
+            return
+        }
         if (trackPlayStartTimeMs > 0L) {
             val sessionPlayed = System.currentTimeMillis() - trackPlayStartTimeMs
             accumulatedPlayedMs += sessionPlayed
@@ -157,7 +174,11 @@ class MusicPlayerManager private constructor(private val context: Context) {
         val duration = _durationMs.value
         if (totalPlayed > 3000L) {
             scope.launch(Dispatchers.IO) {
-                repository.recordPlayEvent(trackId, totalPlayed, duration)
+                try {
+                    repository.recordPlayEvent(trackId, totalPlayed, duration)
+                } catch (e: Exception) {
+                    android.util.Log.e("MusicPlayerManager", "Failed to record play event for $trackId", e)
+                }
             }
         }
         accumulatedPlayedMs = 0L
@@ -169,12 +190,14 @@ class MusicPlayerManager private constructor(private val context: Context) {
         if (id.isNotEmpty()) {
             val cached = songMap[id]
             if (cached != null) return cached
-            scope.launch(Dispatchers.IO) {
-                val fromDb = repository.getSongById(id)
-                if (fromDb != null) {
-                    songMap[id] = fromDb
-                    if (_currentSong.value?.id == id) {
-                        _currentSong.value = fromDb
+            if (!id.startsWith("stream_")) {
+                scope.launch(Dispatchers.IO) {
+                    val fromDb = repository.getSongById(id)
+                    if (fromDb != null) {
+                        songMap[id] = fromDb
+                        if (_currentSong.value?.id == id) {
+                            _currentSong.value = fromDb
+                        }
                     }
                 }
             }
@@ -274,7 +297,9 @@ class MusicPlayerManager private constructor(private val context: Context) {
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            _isBuffering.value = (playbackState == Player.STATE_BUFFERING)
             if (playbackState == Player.STATE_READY) {
+                _isBuffering.value = false
                 if (_currentSong.value == null && mediaController?.currentMediaItem != null) {
                     _currentSong.value = resolveSong(mediaController?.currentMediaItem)
                 }
@@ -282,7 +307,15 @@ class MusicPlayerManager private constructor(private val context: Context) {
                 if (dur > 0L) {
                     _durationMs.value = dur
                 }
+                mediaController?.let {
+                    _bufferedPositionMs.value = it.bufferedPosition.coerceAtLeast(0L)
+                }
+            } else if (playbackState == Player.STATE_BUFFERING) {
+                mediaController?.let {
+                    _bufferedPositionMs.value = it.bufferedPosition.coerceAtLeast(0L)
+                }
             } else if (playbackState == Player.STATE_ENDED) {
+                _isBuffering.value = false
                 commitCurrentPlayEvent()
                 _isPlaying.value = false
                 _currentPositionMs.value = 0L
@@ -297,6 +330,22 @@ class MusicPlayerManager private constructor(private val context: Context) {
                     _queue.value = internalQueue.map { it.song }
                     updateUserQueuedIds()
                 }
+            } else if (playbackState == Player.STATE_IDLE) {
+                _isBuffering.value = false
+            }
+        }
+
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            android.util.Log.e("MusicPlayerManager", "Player error: ${error.errorCodeName}", error)
+            _isBuffering.value = false
+            _isPlaying.value = false
+            val current = _currentSong.value
+            if (current != null && current.id.startsWith("stream_")) {
+                android.widget.Toast.makeText(
+                    context,
+                    "Streaming connection error. Retrying or downloading in background...",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             }
         }
 
@@ -314,15 +363,17 @@ class MusicPlayerManager private constructor(private val context: Context) {
         progressJob = scope.launch {
             while (isActive) {
                 mediaController?.let { controller ->
-                    if (controller.isPlaying) {
+                    if (controller.isPlaying || controller.playbackState == Player.STATE_BUFFERING) {
                         _currentPositionMs.value = controller.currentPosition.coerceAtLeast(0L)
                         val dur = controller.duration
                         if (dur > 0L) {
                             _durationMs.value = dur
                         }
+                        _bufferedPositionMs.value = controller.bufferedPosition.coerceAtLeast(0L)
+                        _isBuffering.value = (controller.playbackState == Player.STATE_BUFFERING)
                     }
                 }
-                delay(300)
+                delay(250)
             }
         }
     }
@@ -331,11 +382,14 @@ class MusicPlayerManager private constructor(private val context: Context) {
         progressJob?.cancel()
         mediaController?.let {
             _currentPositionMs.value = it.currentPosition.coerceAtLeast(0L)
+            _bufferedPositionMs.value = it.bufferedPosition.coerceAtLeast(0L)
+            _isBuffering.value = (it.playbackState == Player.STATE_BUFFERING)
         }
     }
 
     fun playSong(song: Song, newQueue: List<Song>) {
         val controller = mediaController ?: return
+        commitCurrentPlayEvent()
         val queueToUse = if (newQueue.isEmpty()) listOf(song) else newQueue
 
         songMap.clear()
@@ -349,6 +403,8 @@ class MusicPlayerManager private constructor(private val context: Context) {
         val mediaItems = queueToUse.map { it.toMediaItem() }
         val startIndex = queueToUse.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
         lastPlayedIndex = startIndex
+        activeTrackId = song.id
+        trackPlayStartTimeMs = System.currentTimeMillis()
 
         controller.setMediaItems(mediaItems, startIndex, 0L)
         controller.prepare()
@@ -383,6 +439,8 @@ class MusicPlayerManager private constructor(private val context: Context) {
             artworkUri = if (!thumbnailUrl.isNullOrBlank()) Uri.parse(thumbnailUrl) else null
         )
         playSong(streamSong, listOf(streamSong))
+        _bufferedPositionMs.value = 0L
+        _isBuffering.value = true
         android.widget.Toast.makeText(context, "Streaming \"$title\"...", android.widget.Toast.LENGTH_SHORT).show()
     }
 
@@ -400,12 +458,38 @@ class MusicPlayerManager private constructor(private val context: Context) {
             _queue.value = internalQueue.map { it.song }
         }
 
+        // Only switch the active playback if the user is STILL listening to this streaming song.
+        // If the user has switched to another music, do NOT interrupt their playback!
+        val controller = mediaController
         if (_currentSong.value?.id == streamId) {
             _currentSong.value = localSong
+            activeTrackId = localSong.id
+            if (controller != null && controller.currentMediaItem?.mediaId == streamId) {
+                val currentPos = controller.currentPosition.coerceAtLeast(0L)
+                val isCurrentlyPlaying = controller.isPlaying
+                val currIndex = controller.currentMediaItemIndex
+                if (currIndex in 0 until controller.mediaItemCount) {
+                    try {
+                        controller.replaceMediaItem(currIndex, localSong.toMediaItem())
+                        controller.seekTo(currIndex, currentPos)
+                        if (isCurrentlyPlaying) {
+                            controller.play()
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("MusicPlayerManager", "Error updating to local track", e)
+                    }
+                }
+            }
         }
     }
 
     fun updateSongMetadata(updatedSong: Song) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                updateSongMetadata(updatedSong)
+            }
+            return
+        }
         songMap[updatedSong.id] = updatedSong
         if (_currentSong.value?.id == updatedSong.id) {
             _currentSong.value = updatedSong
@@ -501,6 +585,7 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
     fun playSongAtIndex(index: Int) {
         val controller = mediaController ?: return
+        commitCurrentPlayEvent()
         if (index in internalQueue.indices) {
             val currIdx = controller.currentMediaItemIndex
             if (index > currIdx) {
@@ -551,8 +636,16 @@ class MusicPlayerManager private constructor(private val context: Context) {
 
     fun seekTo(positionMs: Long) {
         val controller = mediaController ?: return
-        controller.seekTo(positionMs)
-        _currentPositionMs.value = positionMs
+        val maxDuration = if (_durationMs.value > 0L) _durationMs.value else (controller.duration.takeIf { it > 0L } ?: Long.MAX_VALUE)
+        val safePos = positionMs.coerceIn(0L, maxDuration)
+        try {
+            controller.seekTo(safePos)
+            _currentPositionMs.value = safePos
+            _bufferedPositionMs.value = controller.bufferedPosition.coerceAtLeast(0L)
+            _isBuffering.value = (controller.playbackState == Player.STATE_BUFFERING)
+        } catch (e: Exception) {
+            android.util.Log.e("MusicPlayerManager", "Error seeking to $safePos", e)
+        }
     }
 
     fun skipToNext() {
@@ -682,6 +775,7 @@ class MusicPlayerManager private constructor(private val context: Context) {
     }
 
     fun stopPlayback() {
+        commitCurrentPlayEvent()
         cancelSleepTimer()
         val controller = mediaController ?: return
         controller.stop()
@@ -691,7 +785,9 @@ class MusicPlayerManager private constructor(private val context: Context) {
         updateUserQueuedIds()
         _currentSong.value = null
         _isPlaying.value = false
+        _isBuffering.value = false
         _currentPositionMs.value = 0L
+        _bufferedPositionMs.value = 0L
         _durationMs.value = 0L
         lastPlayedIndex = -1
         stopProgressTracker()

@@ -62,13 +62,13 @@ fun BottomNavBar(
                 val isSelected = tab == currentTab
 
                 val iconColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     animationSpec = tween(durationMillis = 200),
                     label = "iconColor"
                 )
 
                 val textColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     animationSpec = tween(durationMillis = 200),
                     label = "textColor"
                 )
@@ -102,7 +102,7 @@ fun BottomNavBar(
                         Text(
                             text = tab.title,
                             color = textColor,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                             maxLines = 1
                         )

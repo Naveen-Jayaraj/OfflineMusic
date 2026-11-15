@@ -75,10 +75,10 @@ fun TopBar(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "OFFLINE MUSIC",
+                    text = "BitTune",
                     style = MaterialTheme.typography.titleMedium.copy(
-                        letterSpacing = 2.sp,
-                        fontWeight = FontWeight.Black
+                        letterSpacing = (-0.4).sp,
+                        fontWeight = FontWeight.SemiBold
                     ),
                     color = MaterialTheme.colorScheme.onBackground
                 )

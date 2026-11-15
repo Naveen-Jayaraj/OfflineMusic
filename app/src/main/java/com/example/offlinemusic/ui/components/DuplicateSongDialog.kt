@@ -118,7 +118,7 @@ fun DuplicateSongDialog(
                     Text(
                         text = "${prompt.matchPercentage}% MATCH",
                         style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.ExtraBold,
+                            fontWeight = FontWeight.SemiBold,
                             fontSize = 11.sp
                         ),
                         color = matchBadgeColor
@@ -301,7 +301,7 @@ private fun TrackComparisonItem(
             Text(
                 text = badgeLabel,
                 style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.SemiBold,
                     fontSize = 10.sp,
                     letterSpacing = 0.8.sp
                 ),

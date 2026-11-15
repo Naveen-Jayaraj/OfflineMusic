@@ -1,12 +1,10 @@
 package com.example.offlinemusic.downloader.engine
 
+import android.util.Log
+import com.example.offlinemusic.data.database.entities.TrackEntity
+import com.example.offlinemusic.data.remote.ApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
-import java.net.URLEncoder
-import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 data class EnrichedMetadata(
@@ -15,15 +13,19 @@ data class EnrichedMetadata(
     val album: String,
     val year: Int?,
     val genre: String?,
-    val artworkUrl: String?
+    val artworkUrl: String?,
+    val producer: String? = null,
+    val composer: String? = null,
+    val language: String? = null,
+    val mood: String? = null,
+    val lyricsAvailable: Boolean = false,
+    val lyricsUri: String? = null,
+    val metachecked: Boolean = false
 )
 
 object MetadataEnricher {
 
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
+    private const val TAG = "MetadataEnricher"
 
     private val BRACKET_PATTERNS = listOf(
         Pattern.compile("(?i)\\((?:official\\s+)?(?:music\\s+)?video\\)"),
@@ -39,7 +41,7 @@ object MetadataEnricher {
     )
 
     /**
-     * Clean YouTube title noise (matching clean_track_title from lucida-flow)
+     * Clean title noise before sending to MetaEnricher
      */
     fun cleanTrackTitle(title: String): String {
         var s = title.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
@@ -102,110 +104,69 @@ object MetadataEnricher {
     }
 
     /**
-     * Enrich track metadata using iTunes Search API and MusicBrainz (matching lucida-flow)
+     * Enrich track metadata using remote MetaEnricher backend (https://meta-enricher.onrender.com)
      */
-    suspend fun enrich(rawTitle: String, rawArtist: String?, fallbackThumbnailUrl: String?): EnrichedMetadata = withContext(Dispatchers.IO) {
+    suspend fun enrich(
+        rawTitle: String,
+        rawArtist: String?,
+        fallbackThumbnailUrl: String?,
+        durationMs: Long = 0L
+    ): EnrichedMetadata = withContext(Dispatchers.IO) {
         val (parsedTitle, inferredArtist) = parseArtistAndTitle(rawTitle, rawArtist)
         val finalTitle = parsedTitle.ifBlank { rawTitle.trim() }
         val finalArtist = inferredArtist ?: rawArtist?.let { cleanArtistName(it) } ?: "Unknown Artist"
 
-        // 1. Try iTunes Search API (very fast, high quality canonical tags and 600x600 cover art)
         try {
-            val searchTerm = if (finalArtist.isNotBlank() && !finalArtist.equals("Unknown Artist", ignoreCase = true)) {
-                "$finalArtist $finalTitle"
-            } else {
-                finalTitle
+            val dummyId = "dl_${finalTitle.hashCode().toUInt().toString(16)}"
+            val dummyTrack = TrackEntity(
+                id = dummyId,
+                title = finalTitle,
+                normalizedTitle = finalTitle.lowercase(),
+                durationMs = durationMs,
+                fileUri = "file:///temp_download.mp3",
+                artist = finalArtist,
+                artworkUri = fallbackThumbnailUrl
+            )
+
+            val response = ApiClient.metaEnricherApi.enrichSong(dummyTrack)
+            if (response.success) {
+                val song = response.song
+                Log.i(TAG, "MetaEnricher enriched: ${song.title} - ${song.artist}")
+                return@withContext EnrichedMetadata(
+                    title = song.title?.ifBlank { finalTitle } ?: finalTitle,
+                    artist = song.artist?.ifBlank { finalArtist } ?: finalArtist,
+                    album = song.album?.ifBlank { "Downloads" } ?: "Downloads",
+                    year = song.year,
+                    genre = song.genre,
+                    artworkUrl = song.artworkUri ?: fallbackThumbnailUrl,
+                    producer = song.producer,
+                    composer = song.composer,
+                    language = song.language,
+                    mood = song.mood,
+                    lyricsAvailable = song.lyricsAvailable,
+                    lyricsUri = song.lyricsUri,
+                    metachecked = true
+                )
             }
-            val encodedQuery = URLEncoder.encode(searchTerm, "UTF-8")
-            val itunesUrl = "https://itunes.apple.com/search?term=$encodedQuery&entity=song&limit=1"
+        } catch (e: Exception) {
+            Log.w(TAG, "MetaEnricher remote query failed, fallback used: ${e.message}")
+        }
 
-            val req = Request.Builder().url(itunesUrl).header("User-Agent", "Mozilla/5.0").build()
-            val respStr = httpClient.newCall(req).execute().use { it.body?.string() ?: "" }
-            if (respStr.isNotBlank()) {
-                val json = JSONObject(respStr)
-                val results = json.optJSONArray("results")
-                if (results != null && results.length() > 0) {
-                    val item = results.getJSONObject(0)
-                    val itunesTitle = item.optString("trackName", finalTitle)
-                    val itunesArtist = item.optString("artistName", finalArtist)
-                    val itunesAlbum = item.optString("collectionName", "Single")
-                    val itunesGenre = item.optString("primaryGenreName").takeIf { it.isNotBlank() }
-                    val releaseDate = item.optString("releaseDate", "")
-                    val itunesYear = if (releaseDate.length >= 4) releaseDate.substring(0, 4).toIntOrNull() else null
-                    val rawArtwork = item.optString("artworkUrl100", "")
-                    val highResArt = if (rawArtwork.isNotBlank()) {
-                        rawArtwork.replace("100x100bb.jpg", "600x600bb.jpg")
-                    } else fallbackThumbnailUrl
-
-                    return@withContext EnrichedMetadata(
-                        title = itunesTitle,
-                        artist = itunesArtist,
-                        album = itunesAlbum,
-                        year = itunesYear,
-                        genre = itunesGenre,
-                        artworkUrl = highResArt
-                    )
-                }
-            }
-        } catch (_: Exception) {}
-
-        // 2. Try MusicBrainz API
-        try {
-            val q = if (finalArtist.isNotBlank() && !finalArtist.equals("Unknown Artist", ignoreCase = true)) {
-                "recording:\"$finalTitle\" AND artist:\"$finalArtist\""
-            } else {
-                "\"$finalTitle\""
-            }
-            val mbUrl = "https://musicbrainz.org/ws/2/recording?query=${URLEncoder.encode(q, "UTF-8")}&fmt=json&limit=1"
-            val mbReq = Request.Builder()
-                .url(mbUrl)
-                .header("User-Agent", "OfflineMusic/1.0 (contact@offlinemusic.app)")
-                .header("Accept", "application/json")
-                .build()
-
-            val mbStr = httpClient.newCall(mbReq).execute().use { it.body?.string() ?: "" }
-            if (mbStr.isNotBlank()) {
-                val mbJson = JSONObject(mbStr)
-                val recs = mbJson.optJSONArray("recordings")
-                if (recs != null && recs.length() > 0) {
-                    val rec = recs.getJSONObject(0)
-                    val mbTitle = rec.optString("title", finalTitle)
-                    var mbAlbum = "Single"
-                    var mbYear: Int? = null
-                    var coverArtUrl: String? = null
-
-                    val releases = rec.optJSONArray("releases")
-                    if (releases != null && releases.length() > 0) {
-                        val rel = releases.getJSONObject(0)
-                        mbAlbum = rel.optString("title", "Single")
-                        val date = rel.optString("date", "")
-                        if (date.length >= 4) mbYear = date.substring(0, 4).toIntOrNull()
-                        val relId = rel.optString("id", "")
-                        if (relId.isNotBlank()) {
-                            coverArtUrl = "https://coverartarchive.org/release/$relId/front-500"
-                        }
-                    }
-
-                    return@withContext EnrichedMetadata(
-                        title = mbTitle,
-                        artist = finalArtist,
-                        album = mbAlbum,
-                        year = mbYear,
-                        genre = null,
-                        artworkUrl = coverArtUrl ?: fallbackThumbnailUrl
-                    )
-                }
-            }
-        } catch (_: Exception) {}
-
-        // Fallback: cleaned title and artist with original thumbnail
+        // Clean fallback
         EnrichedMetadata(
             title = finalTitle,
             artist = finalArtist,
             album = "Downloads",
             year = null,
             genre = null,
-            artworkUrl = fallbackThumbnailUrl
+            artworkUrl = fallbackThumbnailUrl,
+            producer = null,
+            composer = null,
+            language = null,
+            mood = null,
+            lyricsAvailable = false,
+            lyricsUri = null,
+            metachecked = false
         )
     }
 }

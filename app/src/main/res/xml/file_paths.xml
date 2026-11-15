@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="artwork" path="artwork/" />
+    <files-path name="internal_artwork" path="artwork/" />
+    <files-path name="internal_files" path="." />
     <external-path name="external_storage" path="." />
     <external-files-path name="external_app_files" path="." />
 </paths>

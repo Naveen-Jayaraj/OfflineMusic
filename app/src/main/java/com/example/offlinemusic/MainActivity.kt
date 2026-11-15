@@ -15,6 +15,16 @@ import com.example.offlinemusic.ui.MainViewModel
 import com.example.offlinemusic.ui.screens.MainMusicScreen
 import com.example.offlinemusic.ui.theme.OfflineMusicTheme
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import com.example.offlinemusic.ui.screens.QuietSplashScreen
+
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
@@ -44,16 +54,30 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        checkAndRequestPermissions()
-
         setContent {
             OfflineMusicTheme {
-                MainMusicScreen(
-                    viewModel = viewModel,
-                    onPickFolderClick = {
-                        openDocumentTreeLauncher.launch(null)
+                var showSplash by rememberSaveable { mutableStateOf(savedInstanceState == null) }
+
+                LaunchedEffect(showSplash) {
+                    if (!showSplash) checkAndRequestPermissions()
+                }
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    MainMusicScreen(
+                        viewModel = viewModel,
+                        onPickFolderClick = {
+                            openDocumentTreeLauncher.launch(null)
+                        }
+                    )
+
+                    if (showSplash) {
+                        QuietSplashScreen(
+                            onAnimationComplete = {
+                                showSplash = false
+                            }
+                        )
                     }
-                )
+                }
             }
         }
     }

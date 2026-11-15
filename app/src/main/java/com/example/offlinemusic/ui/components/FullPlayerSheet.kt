@@ -56,6 +56,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -95,6 +96,8 @@ fun FullPlayerSheet(
     isPlaying: Boolean,
     positionMs: Long,
     durationMs: Long,
+    bufferedPositionMs: Long = 0L,
+    isBuffering: Boolean = false,
     isShuffleEnabled: Boolean,
     repeatMode: Int,
     queue: List<Song>,
@@ -141,6 +144,12 @@ fun FullPlayerSheet(
 
     val currentProgress = if (durationMs > 0) {
         (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    val bufferedProgress = if (durationMs > 0) {
+        (bufferedPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else {
         0f
     }
@@ -352,7 +361,7 @@ fun FullPlayerSheet(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = song.title,
-                                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
+                                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -435,26 +444,53 @@ fun FullPlayerSheet(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // Seekbar / Slider
+                    // Seekbar / Slider with YouTube-style playable buffer bar
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        Slider(
-                            value = displayProgress,
-                            onValueChange = {
-                                isUserSeeking = true
-                                seekProgress = it
-                            },
-                            onValueChangeFinished = {
-                                val targetMs = (seekProgress * durationMs).toLong()
-                                onSeekTo(targetMs)
-                                isUserSeeking = false
-                            },
-                            colors = SliderDefaults.colors(
-                                thumbColor = MaterialTheme.colorScheme.primary,
-                                activeTrackColor = MaterialTheme.colorScheme.primary,
-                                inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(38.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            // YouTube-style transparent background track & white playable buffer bar
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 6.dp)
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                if (bufferedProgress > 0f) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(bufferedProgress)
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(Color.White.copy(alpha = 0.38f))
+                                    )
+                                }
+                            }
+
+                            Slider(
+                                value = displayProgress,
+                                onValueChange = {
+                                    isUserSeeking = true
+                                    seekProgress = it
+                                },
+                                onValueChangeFinished = {
+                                    val targetMs = (seekProgress * durationMs).toLong()
+                                    onSeekTo(targetMs)
+                                    isUserSeeking = false
+                                },
+                                colors = SliderDefaults.colors(
+                                    thumbColor = MaterialTheme.colorScheme.primary,
+                                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                                    inactiveTrackColor = Color.Transparent
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
 
                         Row(
                             modifier = Modifier
@@ -516,12 +552,20 @@ fun FullPlayerSheet(
                                 .clickable { onPlayPauseClick() },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(36.dp)
-                            )
+                            if (isBuffering) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(34.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 3.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            }
                         }
 
                         // Next
@@ -793,8 +837,8 @@ private fun SpotifyLyricsPreviewCard(
 ) {
     val cardGradient = Brush.verticalGradient(
         colors = listOf(
-            Color(0xFF261D3A), // Sleek deep purple-slate
-            Color(0xFF130E20)
+            MaterialTheme.colorScheme.surfaceVariant,
+            MaterialTheme.colorScheme.surface
         )
     )
 
@@ -804,7 +848,7 @@ private fun SpotifyLyricsPreviewCard(
             .defaultMinSize(minHeight = 225.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(cardGradient)
-            .border(1.2.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
+            .border(1.2.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
             .clickable { onClick() }
             .padding(horizontal = 22.dp, vertical = 20.dp)
     ) {
@@ -826,25 +870,25 @@ private fun SpotifyLyricsPreviewCard(
                     Text(
                         text = "Lyrics",
                         style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.ExtraBold,
+                            fontWeight = FontWeight.SemiBold,
                             fontSize = 18.sp,
                             letterSpacing = 0.5.sp
                         ),
-                        color = Color.White
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
 
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White.copy(alpha = 0.15f))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
                         .padding(horizontal = 10.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = Icons.Default.OpenInFull,
                         contentDescription = "Expand Lyrics",
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(5.dp))
@@ -855,7 +899,7 @@ private fun SpotifyLyricsPreviewCard(
                             fontSize = 11.sp,
                             letterSpacing = 1.sp
                         ),
-                        color = Color.White
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
@@ -874,11 +918,11 @@ private fun SpotifyLyricsPreviewCard(
                         text = activeLine.text,
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontSize = 22.sp,
-                            fontWeight = FontWeight.Black,
+                            fontWeight = FontWeight.SemiBold,
                             lineHeight = 30.sp,
                             letterSpacing = (-0.3).sp
                         ),
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -890,7 +934,7 @@ private fun SpotifyLyricsPreviewCard(
                                 fontWeight = FontWeight.SemiBold,
                                 lineHeight = 24.sp
                             ),
-                            color = Color.White.copy(alpha = 0.65f),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -903,7 +947,7 @@ private fun SpotifyLyricsPreviewCard(
                                 fontWeight = FontWeight.Normal,
                                 lineHeight = 21.sp
                             ),
-                            color = Color.White.copy(alpha = 0.35f),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -920,7 +964,7 @@ private fun SpotifyLyricsPreviewCard(
                                 fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Medium,
                                 lineHeight = 25.sp
                             ),
-                            color = if (i == 0) Color.White else Color.White.copy(alpha = (0.7f - i * 0.18f).coerceAtLeast(0.25f)),
+                            color = if (i == 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = (0.7f - i * 0.18f).coerceAtLeast(0.25f)),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -938,12 +982,12 @@ private fun SpotifyLyricsPreviewCard(
                             fontSize = 17.sp,
                             lineHeight = 24.sp
                         ),
-                        color = Color.White.copy(alpha = 0.85f)
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
                     )
                     Text(
                         text = "Tap anywhere on this box to open full page lyrics view",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.5f)
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                     )
                 }
             }

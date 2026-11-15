@@ -80,6 +80,10 @@ fun MainMusicScreen(
     val artistChooserList by viewModel.artistChooserList.collectAsState()
     val sleepTimerRemainingMs by viewModel.sleepTimerRemainingMs.collectAsState()
     val sleepTimerSelectedMinutes by viewModel.sleepTimerSelectedMinutes.collectAsState()
+    val serverStatus by viewModel.serverStatus.collectAsState()
+    val enrichmentStats by viewModel.enrichmentStats.collectAsState()
+    val isEnriching by viewModel.isEnriching.collectAsState()
+    val currentEnrichingTitle by viewModel.currentEnrichingTitle.collectAsState()
 
     // Dialog states for customizable playlists
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
@@ -91,6 +95,8 @@ fun MainMusicScreen(
     val isPlaying by viewModel.playerManager.isPlaying.collectAsState()
     val positionMs by viewModel.playerManager.currentPositionMs.collectAsState()
     val durationMs by viewModel.playerManager.durationMs.collectAsState()
+    val bufferedPositionMs by viewModel.playerManager.bufferedPositionMs.collectAsState()
+    val isBuffering by viewModel.playerManager.isBuffering.collectAsState()
     val isShuffleEnabled by viewModel.playerManager.isShuffleEnabled.collectAsState()
     val repeatMode by viewModel.playerManager.repeatMode.collectAsState()
     val queue by viewModel.playerManager.queue.collectAsState()
@@ -211,7 +217,35 @@ fun MainMusicScreen(
                         )
                     }
 
-                    // 5. Bottom Navigation Tabs
+                    // 5. Listening Statistics Screen
+                    com.example.offlinemusic.ui.DetailScreenType.STATISTICS -> {
+                        val statsOverview by viewModel.listeningOverview.collectAsState()
+                        val topSongsStats by viewModel.topSongsStats.collectAsState()
+                        val topArtistsStats by viewModel.topArtistsStats.collectAsState()
+                        val topMoodsStats by viewModel.topMoodsStats.collectAsState()
+                        val topGenresStats by viewModel.topGenresStats.collectAsState()
+                        val topAlbumsStats by viewModel.topAlbumsStats.collectAsState()
+                        val playHistory by viewModel.playHistory.collectAsState()
+                        val selectedTimeRange by viewModel.statsTimeRange.collectAsState()
+
+                        StatisticsScreen(
+                            overview = statsOverview,
+                            topSongs = topSongsStats,
+                            topArtists = topArtistsStats,
+                            topMoods = topMoodsStats,
+                            topGenres = topGenresStats,
+                            topAlbums = topAlbumsStats,
+                            playHistory = playHistory,
+                            selectedTimeRange = selectedTimeRange,
+                            onTimeRangeSelected = { viewModel.setStatsTimeRange(it) },
+                            onBackClick = { viewModel.popDetailStack() },
+                            onSongClick = { viewModel.playSongById(it) },
+                            onArtistClick = { viewModel.openArtistProfile(it) },
+                            onAlbumClick = { viewModel.openAlbumDetailById(it) }
+                        )
+                    }
+
+                    // 6. Bottom Navigation Tabs
                     null -> {
                         when (currentTab) {
                             BottomNavTab.HOME -> {
@@ -227,7 +261,8 @@ fun MainMusicScreen(
                                     onNavigateToLibrary = { viewModel.selectTab(BottomNavTab.LIBRARY) },
                                     onRescanClick = { viewModel.rescan() },
                                     onChangeFolderClick = onPickFolderClick,
-                                    onReviewClick = { viewModel.triggerManualReview() }
+                                    onReviewClick = { viewModel.triggerManualReview() },
+                                    onStatisticsClick = { viewModel.openStatisticsScreen() }
                                 )
                             }
                             BottomNavTab.SEARCH -> {
@@ -292,15 +327,28 @@ fun MainMusicScreen(
                                     playlistCount = allPlaylists.size,
                                     albumCount = allAlbums.size,
                                     artistCount = allArtists.size,
-                                    pendingReviewCount = pendingReviewCount,
                                     isLoading = isLoading,
                                     onChangeFolderClick = onPickFolderClick,
                                     onRescanClick = { viewModel.rescan() },
-                                    onReviewArtistsClick = { viewModel.triggerManualReview() },
                                     downloadSourceFilter = downloadSourceFilter,
                                     onDownloadSourceFilterChange = { viewModel.setDownloadSourceFilter(it) },
                                     onNavigateToTab = { viewModel.selectTab(it) },
-                                    onOpenDownloads = { viewModel.openDownloadsScreen() }
+                                    onOpenDownloads = { viewModel.openDownloadsScreen() },
+                                    onOpenStatistics = { viewModel.openStatisticsScreen() },
+                                    allSongs = allSongs,
+                                    allPlaylists = allPlaylists,
+                                    allAlbums = allAlbums,
+                                    allArtists = allArtists,
+                                    onPlaySong = { song -> viewModel.playSong(song, listOf(song)) },
+                                    onPlaylistClick = { playlist -> viewModel.openPlaylistDetail(playlist) },
+                                    onAlbumClick = { album -> viewModel.openAlbumDetail(album) },
+                                    onArtistClick = { artistName -> viewModel.openArtistProfile(artistName) },
+                                    serverStatus = serverStatus,
+                                    enrichmentStats = enrichmentStats,
+                                    isEnriching = isEnriching,
+                                    currentEnrichingTitle = currentEnrichingTitle,
+                                    onWakeUpServerClick = { viewModel.wakeUpMetaEnricher() },
+                                    onEnrichAllClick = { viewModel.triggerBackgroundEnrichment() }
                                 )
                             }
                         }
@@ -321,6 +369,8 @@ fun MainMusicScreen(
                         isPlaying = isPlaying,
                         positionMs = positionMs,
                         durationMs = durationMs,
+                        bufferedPositionMs = bufferedPositionMs,
+                        isBuffering = isBuffering,
                         isLiked = currentSong?.let { it.id in likedSongIds } ?: false,
                         onToggleLike = { currentSong?.let { viewModel.toggleLikeSong(it.id) } },
                         onPlayPauseClick = { viewModel.playerManager.togglePlayPause() },
@@ -427,14 +477,22 @@ fun MainMusicScreen(
             MetadataEditorDialog(
                 song = songForEditMetadata!!,
                 onDismiss = { viewModel.closeMetadataEditor() },
-                onSave = { newTitle, newArtist, newAlbum, newGenre, newArtUri ->
+                onSave = { newTitle, newArtist, newAlbum, newGenre, newArtUri, newYear, newProducer, newComposer, newLang, newMood, newSrc, newLyricsAvail, newMetaChecked ->
                     viewModel.updateTrackMetadata(
                         trackId = songForEditMetadata!!.id,
                         newTitle = newTitle,
                         rawArtistString = newArtist,
                         newAlbum = newAlbum,
                         newGenre = newGenre,
-                        newArtworkUri = newArtUri
+                        newArtworkUri = newArtUri,
+                        newYear = newYear,
+                        newProducer = newProducer,
+                        newComposer = newComposer,
+                        newLanguage = newLang,
+                        newMood = newMood,
+                        newSource = newSrc,
+                        newLyricsAvailable = newLyricsAvail,
+                        newMetachecked = newMetaChecked
                     )
                 }
             )
@@ -458,6 +516,8 @@ fun MainMusicScreen(
                 isPlaying = isPlaying,
                 positionMs = positionMs,
                 durationMs = durationMs,
+                bufferedPositionMs = bufferedPositionMs,
+                isBuffering = isBuffering,
                 isShuffleEnabled = isShuffleEnabled,
                 repeatMode = repeatMode,
                 queue = queue,

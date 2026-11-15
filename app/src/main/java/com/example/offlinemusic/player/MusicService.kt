@@ -94,7 +94,13 @@ class MusicService : MediaSessionService() {
             .setAudioAttributes(audioAttributes, true) // Handles audio focus (phone calls, other apps)
             .setHandleAudioBecomingNoisy(true) // Pauses on headphone unplug
             .setWakeMode(C.WAKE_MODE_LOCAL) // Keeps CPU awake for screen-off & background playback
-            .build()
+            .build().apply {
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        android.util.Log.e("MusicService", "ExoPlayer error: ${error.errorCodeName}", error)
+                    }
+                })
+            }
 
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP

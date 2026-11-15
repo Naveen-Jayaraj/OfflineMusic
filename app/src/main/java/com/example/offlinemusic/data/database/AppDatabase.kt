@@ -44,7 +44,7 @@ import com.example.offlinemusic.data.database.entities.TrackGenreEntity
         ArtistReviewQueueEntity::class,
         DownloadRecordEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -75,7 +75,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
@@ -394,6 +394,22 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_download_records_created_timestamp` ON `download_records` (`created_timestamp`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_download_records_status` ON `download_records` (`status`)")
+            }
+        }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `artist` TEXT")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `album` TEXT")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `genre` TEXT")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `producer` TEXT")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `composer` TEXT")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `language` TEXT")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `mood` TEXT")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `source` TEXT NOT NULL DEFAULT 'LOCAL'")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `lyrics_available` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `metachecked` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE `tracks` SET `lyrics_available` = 1 WHERE `lyrics_uri` IS NOT NULL AND `lyrics_uri` != ''")
             }
         }
     }

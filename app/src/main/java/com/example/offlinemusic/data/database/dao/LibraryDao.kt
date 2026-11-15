@@ -24,7 +24,17 @@ data class TrackWithDetails(
     val dateModified: Long,
     val relativePath: String,
     val albumId: String?,
-    val lyricsUri: String? = null
+    val lyricsUri: String? = null,
+    val producer: String? = null,
+    val composer: String? = null,
+    val language: String? = null,
+    val mood: String? = null,
+    val source: String? = "LOCAL",
+    val lyricsAvailable: Boolean = false,
+    val metachecked: Boolean = false,
+    val dateAdded: Long = 0L,
+    val playCount: Int = 0,
+    val playlistAddedTimestamp: Long? = null
 )
 
 @Dao
@@ -37,24 +47,34 @@ interface LibraryDao {
                    FROM track_artists ta
                    LEFT JOIN artists a ON ta.artist_id = a.id
                    WHERE ta.track_id = t.id
-               ), 'Unknown Artist') AS artistName,
-               COALESCE(a.title, 'Unknown Album') AS albumTitle,
+               ), t.artist, 'Unknown Artist') AS artistName,
+               COALESCE(a.title, t.album, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,
                t.file_uri AS fileUri,
                COALESCE(t.artwork_uri, a.artwork_uri) AS artworkUri,
                t.is_liked AS isLiked,
                t.track_number AS trackNumber,
                t.year,
-               (
+               COALESCE((
                    SELECT g.canonical_name FROM genres g
                    INNER JOIN track_genres tg ON g.id = tg.genre_id
                    WHERE tg.track_id = t.id LIMIT 1
-               ) AS genre,
+               ), t.genre) AS genre,
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
                t.album_id AS albumId,
-               t.lyrics_uri AS lyricsUri
+               t.lyrics_uri AS lyricsUri,
+               t.producer AS producer,
+               t.composer AS composer,
+               t.language AS language,
+               t.mood AS mood,
+               COALESCE(t.source, 'LOCAL') AS source,
+               CASE WHEN (t.lyrics_available = 1 OR (t.lyrics_uri IS NOT NULL AND t.lyrics_uri != '')) THEN 1 ELSE 0 END AS lyricsAvailable,
+               COALESCE(t.metachecked, 0) AS metachecked,
+               COALESCE(t.date_added, 0) AS dateAdded,
+               COALESCE(t.play_count, 0) AS playCount,
+               COALESCE(t.date_added, 0) AS playlistAddedTimestamp
         FROM tracks t
         LEFT JOIN albums a ON t.album_id = a.id
         ORDER BY t.normalized_title ASC
@@ -68,24 +88,34 @@ interface LibraryDao {
                    FROM track_artists ta
                    LEFT JOIN artists a ON ta.artist_id = a.id
                    WHERE ta.track_id = t.id
-               ), 'Unknown Artist') AS artistName,
-               COALESCE(a.title, 'Unknown Album') AS albumTitle,
+               ), t.artist, 'Unknown Artist') AS artistName,
+               COALESCE(a.title, t.album, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,
                t.file_uri AS fileUri,
                COALESCE(t.artwork_uri, a.artwork_uri) AS artworkUri,
                t.is_liked AS isLiked,
                t.track_number AS trackNumber,
                t.year,
-               (
+               COALESCE((
                    SELECT g.canonical_name FROM genres g
                    INNER JOIN track_genres tg ON g.id = tg.genre_id
                    WHERE tg.track_id = t.id LIMIT 1
-               ) AS genre,
+               ), t.genre) AS genre,
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
                t.album_id AS albumId,
-               t.lyrics_uri AS lyricsUri
+               t.lyrics_uri AS lyricsUri,
+               t.producer AS producer,
+               t.composer AS composer,
+               t.language AS language,
+               t.mood AS mood,
+               COALESCE(t.source, 'LOCAL') AS source,
+               CASE WHEN (t.lyrics_available = 1 OR (t.lyrics_uri IS NOT NULL AND t.lyrics_uri != '')) THEN 1 ELSE 0 END AS lyricsAvailable,
+               COALESCE(t.metachecked, 0) AS metachecked,
+               COALESCE(t.date_added, 0) AS dateAdded,
+               COALESCE(t.play_count, 0) AS playCount,
+               COALESCE(t.date_added, 0) AS playlistAddedTimestamp
         FROM tracks t
         LEFT JOIN albums a ON t.album_id = a.id
         WHERE t.id = :trackId LIMIT 1
@@ -99,24 +129,34 @@ interface LibraryDao {
                    FROM track_artists ta
                    LEFT JOIN artists a ON ta.artist_id = a.id
                    WHERE ta.track_id = t.id
-               ), 'Unknown Artist') AS artistName,
-               COALESCE(a.title, 'Unknown Album') AS albumTitle,
+               ), t.artist, 'Unknown Artist') AS artistName,
+               COALESCE(a.title, t.album, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,
                t.file_uri AS fileUri,
                COALESCE(t.artwork_uri, a.artwork_uri) AS artworkUri,
                t.is_liked AS isLiked,
                t.track_number AS trackNumber,
                t.year,
-               (
+               COALESCE((
                    SELECT g.canonical_name FROM genres g
                    INNER JOIN track_genres tg ON g.id = tg.genre_id
                    WHERE tg.track_id = t.id LIMIT 1
-               ) AS genre,
+               ), t.genre) AS genre,
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
                t.album_id AS albumId,
-               t.lyrics_uri AS lyricsUri
+               t.lyrics_uri AS lyricsUri,
+               t.producer AS producer,
+               t.composer AS composer,
+               t.language AS language,
+               t.mood AS mood,
+               COALESCE(t.source, 'LOCAL') AS source,
+               CASE WHEN (t.lyrics_available = 1 OR (t.lyrics_uri IS NOT NULL AND t.lyrics_uri != '')) THEN 1 ELSE 0 END AS lyricsAvailable,
+               COALESCE(t.metachecked, 0) AS metachecked,
+               COALESCE(t.date_added, 0) AS dateAdded,
+               COALESCE(t.play_count, 0) AS playCount,
+               COALESCE(t.date_added, 0) AS playlistAddedTimestamp
         FROM tracks t
         LEFT JOIN albums a ON t.album_id = a.id
         WHERE t.album_id = :albumId
@@ -131,24 +171,34 @@ interface LibraryDao {
                    FROM track_artists ta
                    LEFT JOIN artists a ON ta.artist_id = a.id
                    WHERE ta.track_id = t.id
-               ), 'Unknown Artist') AS artistName,
-               COALESCE(a.title, 'Unknown Album') AS albumTitle,
+               ), t.artist, 'Unknown Artist') AS artistName,
+               COALESCE(a.title, t.album, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,
                t.file_uri AS fileUri,
                COALESCE(t.artwork_uri, a.artwork_uri) AS artworkUri,
                t.is_liked AS isLiked,
                t.track_number AS trackNumber,
                t.year,
-               (
+               COALESCE((
                    SELECT g.canonical_name FROM genres g
                    INNER JOIN track_genres tg ON g.id = tg.genre_id
                    WHERE tg.track_id = t.id LIMIT 1
-               ) AS genre,
+               ), t.genre) AS genre,
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
                t.album_id AS albumId,
-               t.lyrics_uri AS lyricsUri
+               t.lyrics_uri AS lyricsUri,
+               t.producer AS producer,
+               t.composer AS composer,
+               t.language AS language,
+               t.mood AS mood,
+               COALESCE(t.source, 'LOCAL') AS source,
+               CASE WHEN (t.lyrics_available = 1 OR (t.lyrics_uri IS NOT NULL AND t.lyrics_uri != '')) THEN 1 ELSE 0 END AS lyricsAvailable,
+               COALESCE(t.metachecked, 0) AS metachecked,
+               COALESCE(t.date_added, 0) AS dateAdded,
+               COALESCE(t.play_count, 0) AS playCount,
+               COALESCE(t.date_added, 0) AS playlistAddedTimestamp
         FROM tracks t
         INNER JOIN track_artists ta ON t.id = ta.track_id
         LEFT JOIN albums a ON t.album_id = a.id
@@ -164,24 +214,34 @@ interface LibraryDao {
                    FROM track_artists ta
                    LEFT JOIN artists a ON ta.artist_id = a.id
                    WHERE ta.track_id = t.id
-               ), 'Unknown Artist') AS artistName,
-               COALESCE(a.title, 'Unknown Album') AS albumTitle,
+               ), t.artist, 'Unknown Artist') AS artistName,
+               COALESCE(a.title, t.album, 'Unknown Album') AS albumTitle,
                t.duration_ms AS durationMs,
                t.file_uri AS fileUri,
                COALESCE(t.artwork_uri, a.artwork_uri) AS artworkUri,
                t.is_liked AS isLiked,
                t.track_number AS trackNumber,
                t.year,
-               (
+               COALESCE((
                    SELECT g.canonical_name FROM genres g
                    INNER JOIN track_genres tg ON g.id = tg.genre_id
                    WHERE tg.track_id = t.id LIMIT 1
-               ) AS genre,
+               ), t.genre) AS genre,
                t.size_bytes AS sizeBytes,
                t.date_modified AS dateModified,
                t.relative_path AS relativePath,
                t.album_id AS albumId,
-               t.lyrics_uri AS lyricsUri
+               t.lyrics_uri AS lyricsUri,
+               t.producer AS producer,
+               t.composer AS composer,
+               t.language AS language,
+               t.mood AS mood,
+               COALESCE(t.source, 'LOCAL') AS source,
+               CASE WHEN (t.lyrics_available = 1 OR (t.lyrics_uri IS NOT NULL AND t.lyrics_uri != '')) THEN 1 ELSE 0 END AS lyricsAvailable,
+               COALESCE(t.metachecked, 0) AS metachecked,
+               COALESCE(t.date_added, 0) AS dateAdded,
+               COALESCE(t.play_count, 0) AS playCount,
+               COALESCE(pt.added_timestamp, t.date_added, 0) AS playlistAddedTimestamp
         FROM tracks t
         INNER JOIN playlist_tracks pt ON t.id = pt.track_id
         LEFT JOIN albums a ON t.album_id = a.id
@@ -199,4 +259,3 @@ interface LibraryDao {
     """)
     suspend fun getAlbumsForArtist(artistId: String): List<AlbumEntity>
 }
-

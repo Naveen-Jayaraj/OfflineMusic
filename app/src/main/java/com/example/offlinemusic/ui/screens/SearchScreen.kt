@@ -136,7 +136,7 @@ fun SearchScreen(
                 Text(
                     text = "Search",
                     style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.ExtraBold,
+                        fontWeight = FontWeight.SemiBold,
                         letterSpacing = (-0.5).sp
                     ),
                     color = MaterialTheme.colorScheme.onBackground

@@ -49,7 +49,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -123,7 +122,7 @@ fun LibraryScreen(
                 Text(
                     text = "Your Library",
                     style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.ExtraBold,
+                        fontWeight = FontWeight.SemiBold,
                         letterSpacing = (-0.5).sp
                     ),
                     color = MaterialTheme.colorScheme.onBackground
@@ -201,7 +200,7 @@ fun LibraryScreen(
                         artworkUri = likedPlaylist.artworkUri,
                         isLikedSpecial = true,
                         icon = Icons.Default.Favorite,
-                        iconTint = Color(0xFFE91E63),
+                        iconTint = MaterialTheme.colorScheme.tertiary,
                         onClick = { onPlaylistClick(likedPlaylist) },
                         onPlayClick = { onPlayPlaylistClick(likedPlaylist) }
                     )
@@ -217,7 +216,7 @@ fun LibraryScreen(
                         artworkUri = downloadedPlaylist.artworkUri,
                         isRecentlyDownloadedSpecial = true,
                         icon = Icons.Default.DownloadDone,
-                        iconTint = Color(0xFF00E676),
+                        iconTint = MaterialTheme.colorScheme.primary,
                         onClick = { onPlaylistClick(downloadedPlaylist) },
                         onPlayClick = { onPlayPlaylistClick(downloadedPlaylist) }
                     )
@@ -409,16 +408,14 @@ private fun LibraryItemRow(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
-                            Brush.linearGradient(
-                                colors = listOf(Color(0xFFE91E63), Color(0xFF9C27B0), Color(0xFF3F51B5))
-                            )
+                            MaterialTheme.colorScheme.tertiaryContainer
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Favorite,
                         contentDescription = "Liked Songs",
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -427,16 +424,14 @@ private fun LibraryItemRow(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
-                            Brush.linearGradient(
-                                colors = listOf(Color(0xFF00E676), Color(0xFF00B0FF), Color(0xFF304FFE))
-                            )
+                            MaterialTheme.colorScheme.primaryContainer
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.DownloadDone,
                         contentDescription = "Recently Downloaded",
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.size(24.dp)
                     )
                 }

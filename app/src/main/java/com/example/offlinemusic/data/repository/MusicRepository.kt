@@ -2,6 +2,7 @@ package com.example.offlinemusic.data.repository
 
 import android.content.Context
 import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.room.withTransaction
 import com.example.offlinemusic.data.database.AppDatabase
 import com.example.offlinemusic.data.database.dao.PlaylistWithStats
@@ -15,9 +16,16 @@ import com.example.offlinemusic.data.database.entities.PlaylistTrackEntity
 import com.example.offlinemusic.data.database.entities.TrackArtistEntity
 import com.example.offlinemusic.data.database.entities.TrackGenreEntity
 import com.example.offlinemusic.data.model.Album
+import com.example.offlinemusic.data.model.AlbumStat
 import com.example.offlinemusic.data.model.ArtistProfile
+import com.example.offlinemusic.data.model.ArtistStat
+import com.example.offlinemusic.data.model.GenreStat
+import com.example.offlinemusic.data.model.ListeningOverviewStats
+import com.example.offlinemusic.data.model.MoodStat
+import com.example.offlinemusic.data.model.PlayHistoryItem
 import com.example.offlinemusic.data.model.Playlist
 import com.example.offlinemusic.data.model.Song
+import com.example.offlinemusic.data.model.SongStat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -209,7 +217,15 @@ class MusicRepository(private val context: Context) {
         rawArtistString: String,
         newAlbum: String?,
         newGenre: String?,
-        newArtworkUri: Uri?
+        newArtworkUri: Uri?,
+        newYear: Int? = null,
+        newProducer: String? = null,
+        newComposer: String? = null,
+        newLanguage: String? = null,
+        newMood: String? = null,
+        newSource: String? = null,
+        newLyricsAvailable: Boolean? = null,
+        newMetachecked: Boolean? = null
     ): Song? = withContext(Dispatchers.IO) {
         val track = trackDao.getTrackById(trackId) ?: return@withContext null
         val fileUri = Uri.parse(track.fileUri)
@@ -224,18 +240,61 @@ class MusicRepository(private val context: Context) {
         var artworkBytes: ByteArray? = null
         var finalArtworkUri: String? = track.artworkUri
 
-        if (newArtworkUri != null && newArtworkUri.toString() != track.artworkUri) {
+        if (newArtworkUri != null) {
             try {
-                context.contentResolver.openInputStream(newArtworkUri)?.use { input ->
-                    artworkBytes = input.readBytes()
+                val scheme = newArtworkUri.scheme
+                val isOwnFileProvider = newArtworkUri.authority == "${context.packageName}.fileprovider"
+
+                if (isOwnFileProvider) {
+                    val lastSeg = newArtworkUri.lastPathSegment ?: ""
+                    val fileInFiles = File(File(context.filesDir, "artwork"), lastSeg)
+                    val fileInCache = File(File(context.cacheDir, "artwork"), lastSeg)
+                    val targetFile = if (fileInFiles.exists()) fileInFiles else fileInCache
+                    if (targetFile.exists() && targetFile.length() > 0) {
+                        artworkBytes = targetFile.readBytes()
+                    } else {
+                        context.contentResolver.openInputStream(newArtworkUri)?.use { input ->
+                            artworkBytes = input.readBytes()
+                        }
+                    }
+                } else if (scheme.equals("http", ignoreCase = true) || scheme.equals("https", ignoreCase = true)) {
+                    val req = okhttp3.Request.Builder()
+                        .url(newArtworkUri.toString())
+                        .header("User-Agent", "Mozilla/5.0")
+                        .build()
+                    com.example.offlinemusic.data.remote.ApiClient.okHttpClient.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            artworkBytes = resp.body?.bytes()
+                        }
+                    }
+                } else if (scheme.equals("file", ignoreCase = true) || scheme.isNullOrBlank()) {
+                    val decodedPath = Uri.decode(newArtworkUri.path ?: "")
+                    val file = File(decodedPath).takeIf { it.exists() } ?: File(newArtworkUri.path ?: "")
+                    if (file.exists() && file.length() > 0) {
+                        artworkBytes = file.readBytes()
+                    }
+                } else {
+                    context.contentResolver.openInputStream(newArtworkUri)?.use { input ->
+                        artworkBytes = input.readBytes()
+                    }
                 }
+
                 if (artworkBytes != null && artworkBytes!!.isNotEmpty()) {
-                    val artworkDir = File(context.cacheDir, "artwork").apply { mkdirs() }
+                    val artworkDir = File(context.filesDir, "artwork").apply { mkdirs() }
                     val artFile = File(artworkDir, "art_${trackId}_${System.currentTimeMillis()}.jpg")
                     artFile.writeBytes(artworkBytes!!)
-                    finalArtworkUri = Uri.fromFile(artFile).toString()
+                    val contentUri = try {
+                        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", artFile)
+                    } catch (_: Exception) {
+                        Uri.fromFile(artFile)
+                    }
+                    finalArtworkUri = contentUri.toString()
+                } else if (newArtworkUri.toString().isNotBlank()) {
+                    finalArtworkUri = newArtworkUri.toString()
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                android.util.Log.w("MusicRepository", "Failed processing artwork Uri: $newArtworkUri", e)
+            }
         }
 
         // Write directly to physical audio file metadata (ID3v2)
@@ -251,7 +310,7 @@ class MusicRepository(private val context: Context) {
 
         // Update database within transaction
         db.withTransaction {
-            var targetAlbumId: String? = null
+            var targetAlbumId = track.albumId
             if (!newAlbum.isNullOrBlank() && !newAlbum.equals("Unknown Album", ignoreCase = true)) {
                 val normAlbum = newAlbum.trim().lowercase()
                 val albumId = "album_${normAlbum.hashCode().toUInt().toString(16)}"
@@ -260,19 +319,35 @@ class MusicRepository(private val context: Context) {
                     title = newAlbum.trim(),
                     normalizedTitle = normAlbum,
                     albumArtist = parsedArtists.firstOrNull() ?: "Various Artists",
-                    releaseYear = track.year,
+                    releaseYear = newYear ?: track.year,
                     artworkUri = finalArtworkUri
                 )
                 albumDao.insertOrUpdateAlbum(albumEntity)
                 targetAlbumId = albumId
+            } else if (targetAlbumId != null && finalArtworkUri != null) {
+                albumDao.getAlbumById(targetAlbumId)?.let { oldAlbum ->
+                    albumDao.insertOrUpdateAlbum(oldAlbum.copy(artworkUri = finalArtworkUri))
+                }
             }
 
             // 1. Update track entity
             val updatedTrack = track.copy(
                 title = newTitle.trim(),
                 normalizedTitle = newTitle.trim().lowercase(),
+                artist = rawArtistString.trim(),
+                album = newAlbum?.trim(),
+                genre = newGenre?.trim(),
                 albumId = targetAlbumId,
                 artworkUri = finalArtworkUri,
+                year = newYear ?: track.year,
+                producer = newProducer ?: track.producer,
+                composer = newComposer ?: track.composer,
+                language = newLanguage ?: track.language,
+                mood = newMood ?: track.mood,
+                source = newSource ?: track.source,
+                lyricsAvailable = newLyricsAvailable ?: track.lyricsAvailable,
+                metadataStatus = if (newMetachecked == true) "CONFIRMED" else track.metadataStatus,
+                metachecked = newMetachecked ?: track.metachecked,
                 dateModified = System.currentTimeMillis()
             )
             trackDao.updateTrack(updatedTrack)
@@ -332,6 +407,12 @@ class MusicRepository(private val context: Context) {
         }
 
         normalizeAndCleanArtistProfiles()
+
+        try {
+            val loader = coil.Coil.imageLoader(context)
+            loader.memoryCache?.clear()
+            loader.diskCache?.clear()
+        } catch (_: Exception) {}
 
         // Return refreshed song
         libraryDao.getTrackWithDetailsById(trackId)?.toSong()
@@ -475,7 +556,12 @@ class MusicRepository(private val context: Context) {
     suspend fun getPlaylistWithSongs(playlistId: String): Playlist? = withContext(Dispatchers.IO) {
         val playlist = playlistDao.getPlaylistById(playlistId) ?: return@withContext null
         val tracks = if (playlist.playlistType == "LIKED") {
-            trackDao.getLikedTracks().mapNotNull { libraryDao.getTrackWithDetailsById(it.id)?.toSong() }
+            val playlistTracks = libraryDao.getTracksWithDetailsForPlaylist(playlistId).map { it.toSong() }
+            if (playlistTracks.isNotEmpty()) {
+                playlistTracks
+            } else {
+                trackDao.getLikedTracks().mapNotNull { libraryDao.getTrackWithDetailsById(it.id)?.toSong() }
+            }
         } else {
             libraryDao.getTracksWithDetailsForPlaylist(playlistId).map { it.toSong() }
         }
@@ -500,12 +586,30 @@ class MusicRepository(private val context: Context) {
         val newLiked = !track.isLiked
         trackDao.setLiked(songId, newLiked)
 
-        val likedPlaylist = playlistDao.getLikedSongsPlaylist()
-        val likedId = likedPlaylist?.id ?: "liked_songs"
+        var likedPlaylist = playlistDao.getLikedSongsPlaylist()
+        if (likedPlaylist == null) {
+            likedPlaylist = PlaylistEntity(
+                id = "liked_songs",
+                name = "Liked Songs",
+                description = "Songs you've liked",
+                playlistType = "LIKED",
+                createdAt = 0L
+            )
+            playlistDao.insertOrUpdatePlaylist(likedPlaylist)
+        }
+        val likedId = likedPlaylist.id
         if (newLiked) {
-            val nextPos = playlistDao.getMaxPlaylistPosition(likedId) + 1
-            playlistDao.insertPlaylistTracks(
-                listOf(PlaylistTrackEntity(playlistId = likedId, trackId = songId, position = nextPos))
+            playlistDao.removeTrackFromPlaylist(likedId, songId)
+            val minPos = playlistDao.getMinPlaylistPosition(likedId)
+            val count = playlistDao.getPlaylistTrackCount(likedId)
+            val topPos = if (count == 0) 0 else minPos - 1
+            playlistDao.insertPlaylistTrack(
+                PlaylistTrackEntity(
+                    playlistId = likedId,
+                    trackId = songId,
+                    position = topPos,
+                    addedTimestamp = System.currentTimeMillis()
+                )
             )
         } else {
             playlistDao.removeTrackFromPlaylist(likedId, songId)
@@ -627,17 +731,42 @@ class MusicRepository(private val context: Context) {
             playlistDao.insertOrUpdatePlaylist(likedPlaylist)
         }
         val likedTracks = trackDao.getLikedTracks()
-        playlistDao.clearPlaylistTracks(likedPlaylist.id)
-        if (likedTracks.isNotEmpty()) {
-            val likedLinks = likedTracks.mapIndexed { idx, t ->
-                PlaylistTrackEntity(
-                    playlistId = likedPlaylist.id,
-                    trackId = t.id,
-                    position = idx,
-                    addedTimestamp = t.dateAdded
-                )
+        val currentPlaylistTracks = playlistDao.getTracksForPlaylist(likedPlaylist.id)
+        val currentTrackIds = currentPlaylistTracks.map { it.id }.toSet()
+        val likedTrackIds = likedTracks.map { it.id }.toSet()
+
+        // Remove any tracks in the playlist that are no longer liked
+        for (unlikedId in (currentTrackIds - likedTrackIds)) {
+            playlistDao.removeTrackFromPlaylist(likedPlaylist.id, unlikedId)
+        }
+
+        // Add any missing liked tracks without wiping existing order
+        val missingLikedTracks = likedTracks.filter { it.id !in currentTrackIds }
+        if (missingLikedTracks.isNotEmpty()) {
+            if (currentTrackIds.isEmpty()) {
+                val likedLinks = missingLikedTracks.mapIndexed { idx, t ->
+                    PlaylistTrackEntity(
+                        playlistId = likedPlaylist.id,
+                        trackId = t.id,
+                        position = idx,
+                        addedTimestamp = t.dateAdded
+                    )
+                }
+                playlistDao.insertPlaylistTracks(likedLinks)
+            } else {
+                var minPos = playlistDao.getMinPlaylistPosition(likedPlaylist.id)
+                for (t in missingLikedTracks) {
+                    minPos--
+                    playlistDao.insertPlaylistTrack(
+                        PlaylistTrackEntity(
+                            playlistId = likedPlaylist.id,
+                            trackId = t.id,
+                            position = minPos,
+                            addedTimestamp = t.dateAdded
+                        )
+                    )
+                }
             }
-            playlistDao.insertPlaylistTracks(likedLinks)
         }
 
         // 2. Sync Folder Playlists for every song in the database
@@ -695,25 +824,60 @@ class MusicRepository(private val context: Context) {
         source: String = "ALL_SONGS",
         playlistId: String? = null
     ) = withContext(Dispatchers.IO) {
-        if (playedDurationMs < 5000L) return@withContext // Ignore accidental skips under 5 seconds
+        if (trackId.isBlank() || trackId.startsWith("stream_")) return@withContext
+        try {
+            if (playedDurationMs < 5000L) return@withContext // Ignore accidental skips under 5 seconds
 
-        val isCompleted = playedDurationMs >= 30_000L || (totalDurationMs > 0 && playedDurationMs >= totalDurationMs / 2)
-        val now = System.currentTimeMillis()
+            val isCompleted = playedDurationMs >= 30_000L || (totalDurationMs > 0 && playedDurationMs >= totalDurationMs / 2)
+            val now = System.currentTimeMillis()
 
-        playEventDao.insertPlayEvent(
-            PlayEventEntity(
-                trackId = trackId,
-                playbackTimestamp = now,
-                playedDurationMs = playedDurationMs,
-                completionStatus = isCompleted,
-                playbackSource = source,
-                playlistId = playlistId
+            playEventDao.insertPlayEvent(
+                PlayEventEntity(
+                    trackId = trackId,
+                    playbackTimestamp = now,
+                    playedDurationMs = playedDurationMs,
+                    completionStatus = isCompleted,
+                    playbackSource = source,
+                    playlistId = playlistId
+                )
             )
-        )
 
-        if (isCompleted) {
-            trackDao.incrementPlayCount(trackId, now)
+            if (isCompleted) {
+                trackDao.incrementPlayCount(trackId, now)
+            } else {
+                trackDao.updateLastPlayedTimestamp(trackId, now)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MusicRepository", "Failed to record play event for $trackId", e)
         }
+    }
+
+    fun getListeningOverview(sinceTimestamp: Long = 0L): Flow<ListeningOverviewStats> {
+        return playEventDao.getListeningOverview(sinceTimestamp).map { it ?: ListeningOverviewStats() }
+    }
+
+    fun getTopSongsStats(sinceTimestamp: Long = 0L, limit: Int = 50): Flow<List<SongStat>> {
+        return playEventDao.getTopSongs(sinceTimestamp, limit)
+    }
+
+    fun getTopArtistsStats(sinceTimestamp: Long = 0L, limit: Int = 50): Flow<List<ArtistStat>> {
+        return playEventDao.getTopArtists(sinceTimestamp, limit)
+    }
+
+    fun getTopMoodsStats(sinceTimestamp: Long = 0L, limit: Int = 20): Flow<List<MoodStat>> {
+        return playEventDao.getTopMoods(sinceTimestamp, limit)
+    }
+
+    fun getTopGenresStats(sinceTimestamp: Long = 0L, limit: Int = 20): Flow<List<GenreStat>> {
+        return playEventDao.getTopGenres(sinceTimestamp, limit)
+    }
+
+    fun getTopAlbumsStats(sinceTimestamp: Long = 0L, limit: Int = 30): Flow<List<AlbumStat>> {
+        return playEventDao.getTopAlbums(sinceTimestamp, limit)
+    }
+
+    fun getRecentHistory(limit: Int = 100): Flow<List<PlayHistoryItem>> {
+        return playEventDao.getRecentHistory(limit)
     }
 
     fun getRecentlyAdded(limit: Int = 50): Flow<List<Song>> {
@@ -750,7 +914,17 @@ class MusicRepository(private val context: Context) {
             relativePath = relativePath,
             trackNumber = trackNumber,
             artworkUri = artworkUri?.let { Uri.parse(it) },
-            lyricsUri = lyricsUri
+            lyricsUri = lyricsUri,
+            producer = producer,
+            composer = composer,
+            language = language,
+            mood = mood,
+            source = source ?: "LOCAL",
+            lyricsAvailable = lyricsAvailable || (!lyricsUri.isNullOrBlank()),
+            metachecked = metachecked,
+            dateAdded = dateAdded,
+            playCount = playCount,
+            playlistAddedTimestamp = playlistAddedTimestamp
         )
     }
 
@@ -758,11 +932,11 @@ class MusicRepository(private val context: Context) {
         return Song(
             id = id,
             title = title,
-            artist = "Unknown Artist",
-            album = "Unknown Album",
+            artist = artist ?: "Unknown Artist",
+            album = album ?: "Unknown Album",
             albumFolder = "Music",
             year = year,
-            genre = null,
+            genre = genre,
             durationMs = durationMs,
             sizeBytes = sizeBytes,
             dateModified = dateModified,
@@ -770,7 +944,17 @@ class MusicRepository(private val context: Context) {
             relativePath = relativePath,
             trackNumber = trackNumber,
             artworkUri = artworkUri?.let { Uri.parse(it) },
-            lyricsUri = lyricsUri
+            lyricsUri = lyricsUri,
+            producer = producer,
+            composer = composer,
+            language = language,
+            mood = mood,
+            source = source,
+            lyricsAvailable = lyricsAvailable || (!lyricsUri.isNullOrBlank()),
+            metachecked = metachecked,
+            dateAdded = dateAdded,
+            playCount = playCount,
+            playlistAddedTimestamp = dateAdded
         )
     }
 
@@ -878,7 +1062,7 @@ class MusicRepository(private val context: Context) {
         try {
             val track = trackDao.getTrackById(trackId) ?: return@withContext false
             val audioUri = Uri.parse(track.fileUri)
-            val audioPath = audioUri.path ?: track.fileUri
+            val audioPath = Uri.decode(audioUri.path ?: track.fileUri)
             val audioFile = File(audioPath)
 
             val lrcFile = if (audioFile.parentFile?.exists() == true && audioFile.parentFile?.canWrite() == true) {

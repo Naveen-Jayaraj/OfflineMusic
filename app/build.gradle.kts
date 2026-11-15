@@ -79,6 +79,11 @@ dependencies {
 
     // HTTP Client for online searching, Spotify playlist parsing & song downloading
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
+    // Retrofit & Gson for MetaEnricher remote backend
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.11.0")
 
     // WorkManager (Background processing & metadata enrichment)
     implementation(libs.androidx.work.runtime.ktx)

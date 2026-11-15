@@ -417,6 +417,8 @@ class MusicScanner(private val context: Context) {
         var rawAlbumArtist: String? = null
         var year: Int? = null
         var genre: String? = null
+        var composer: String? = null
+        var producer: String? = null
         var durationMs = 0L
         var trackNumber: Int? = null
         var artworkUri: Uri? = null
@@ -438,6 +440,12 @@ class MusicScanner(private val context: Context) {
             }
             mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.trim()?.let {
                 if (it.isNotEmpty()) genre = it
+            }
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_COMPOSER)?.trim()?.let {
+                if (it.isNotEmpty()) composer = it
+            }
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_WRITER)?.trim()?.let {
+                if (it.isNotEmpty()) producer = it
             }
             val dateStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)
                 ?: mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
@@ -517,7 +525,17 @@ class MusicScanner(private val context: Context) {
             dateAdded = System.currentTimeMillis(),
             dateModified = dateModified,
             relativePath = file.name ?: "",
-            lyricsUri = detectedLyricsUri
+            lyricsUri = detectedLyricsUri,
+            artist = rawArtist,
+            album = rawAlbum,
+            genre = genre,
+            producer = producer,
+            composer = composer,
+            language = null,
+            mood = null,
+            source = "LOCAL",
+            lyricsAvailable = detectedLyricsUri != null,
+            metachecked = false
         )
 
         return ExtractedMetadata(
@@ -548,8 +566,19 @@ class MusicScanner(private val context: Context) {
         rawArtistString: String,
         newAlbum: String?,
         newGenre: String?,
-        newArtworkUri: Uri?
-    ): Song? = repository.updateTrackMetadata(trackId, newTitle, rawArtistString, newAlbum, newGenre, newArtworkUri)
+        newArtworkUri: Uri?,
+        newYear: Int? = null,
+        newProducer: String? = null,
+        newComposer: String? = null,
+        newLanguage: String? = null,
+        newMood: String? = null,
+        newSource: String? = null,
+        newLyricsAvailable: Boolean? = null,
+        newMetachecked: Boolean? = null
+    ): Song? = repository.updateTrackMetadata(
+        trackId, newTitle, rawArtistString, newAlbum, newGenre, newArtworkUri,
+        newYear, newProducer, newComposer, newLanguage, newMood, newSource, newLyricsAvailable, newMetachecked
+    )
 
     suspend fun registerDownloadedTrack(
         audioFile: File,
@@ -557,7 +586,15 @@ class MusicScanner(private val context: Context) {
         artist: String,
         album: String? = null,
         artworkFile: File? = null,
-        lrcFile: File? = null
+        lrcFile: File? = null,
+        year: Int? = null,
+        genre: String? = null,
+        producer: String? = null,
+        composer: String? = null,
+        language: String? = null,
+        mood: String? = null,
+        source: String = "DOWNLOAD",
+        metachecked: Boolean = false
     ): Song = withContext(Dispatchers.IO) {
         val fileUri = Uri.fromFile(audioFile).toString()
         val trackId = fileUri.hashCode().toUInt().toString(16)
@@ -648,7 +685,18 @@ class MusicScanner(private val context: Context) {
             dateAdded = System.currentTimeMillis(),
             dateModified = dateModified,
             relativePath = audioFile.name,
-            lyricsUri = finalLrcUri
+            lyricsUri = finalLrcUri,
+            artist = artist.trim(),
+            album = album?.trim(),
+            year = year,
+            genre = genre,
+            producer = producer,
+            composer = composer,
+            language = language,
+            mood = mood,
+            source = source,
+            lyricsAvailable = finalLrcUri != null,
+            metachecked = metachecked
         )
 
         db.withTransaction {
@@ -664,15 +712,22 @@ class MusicScanner(private val context: Context) {
             artist = artist.trim(),
             album = album ?: "Unknown Album",
             albumFolder = album ?: "Downloads",
-            year = null,
-            genre = null,
+            year = year,
+            genre = genre,
             durationMs = durationMs,
             sizeBytes = sizeBytes,
             dateModified = dateModified,
             uri = Uri.fromFile(audioFile),
             relativePath = audioFile.name,
             artworkUri = artworkUri,
-            lyricsUri = finalLrcUri
+            lyricsUri = finalLrcUri,
+            producer = producer,
+            composer = composer,
+            language = language,
+            mood = mood,
+            source = source,
+            lyricsAvailable = finalLrcUri != null,
+            metachecked = metachecked
         )
     }
 
@@ -683,7 +738,15 @@ class MusicScanner(private val context: Context) {
         newArtist: String,
         newAlbum: String? = null,
         newArtworkFile: File? = null,
-        newLrcFile: File? = null
+        newLrcFile: File? = null,
+        newYear: Int? = null,
+        newGenre: String? = null,
+        newProducer: String? = null,
+        newComposer: String? = null,
+        newLanguage: String? = null,
+        newMood: String? = null,
+        newSource: String = "DOWNLOAD",
+        newMetachecked: Boolean = false
     ): Song = withContext(Dispatchers.IO) {
         val existingEntity = db.trackDao().getTrackById(existingTrackId)
         val oldFileUri = existingEntity?.fileUri
@@ -766,7 +829,18 @@ class MusicScanner(private val context: Context) {
             relativePath = newAudioFile.name,
             albumId = albumId,
             artworkUri = artworkUri?.toString() ?: existingEntity?.artworkUri,
-            lyricsUri = finalLrcUri
+            lyricsUri = finalLrcUri,
+            artist = newArtist.ifBlank { existingEntity?.artist ?: "Unknown Artist" },
+            album = newAlbum ?: existingEntity?.album,
+            genre = newGenre ?: existingEntity?.genre,
+            year = newYear ?: existingEntity?.year,
+            producer = newProducer ?: existingEntity?.producer,
+            composer = newComposer ?: existingEntity?.composer,
+            language = newLanguage ?: existingEntity?.language,
+            mood = newMood ?: existingEntity?.mood,
+            source = newSource,
+            lyricsAvailable = finalLrcUri != null,
+            metachecked = newMetachecked
         )
 
         val artistParseResult = ArtistNormalizer.parseCredits(newArtist)

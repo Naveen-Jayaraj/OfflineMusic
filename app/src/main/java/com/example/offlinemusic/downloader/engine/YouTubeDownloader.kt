@@ -28,6 +28,17 @@ object YouTubeDownloader {
 
     private val VIDEO_ID_PATTERN = Pattern.compile("(?:v=|/v/|youtu\\.be/|/embed/|/shorts/)([a-zA-Z0-9_-]{11})")
 
+    fun parseDurationStringToMs(durationStr: String): Long {
+        if (durationStr.isBlank()) return 0L
+        val parts = durationStr.split(":").mapNotNull { it.trim().toLongOrNull() }
+        return when (parts.size) {
+            1 -> parts[0] * 1000L
+            2 -> (parts[0] * 60L + parts[1]) * 1000L
+            3 -> (parts[0] * 3600L + parts[1] * 60L + parts[2]) * 1000L
+            else -> 0L
+        }
+    }
+
     fun extractVideoId(urlOrId: String): String {
         var trimmed = urlOrId.trim()
         if (trimmed.startsWith("yt_")) {
@@ -130,6 +141,7 @@ object YouTubeDownloader {
                             title = title,
                             artist = channel,
                             duration = duration,
+                            durationMs = parseDurationStringToMs(duration),
                             views = views,
                             source = DownloadSource.YOUTUBE,
                             sourceUrl = "https://www.youtube.com/watch?v=$videoId",

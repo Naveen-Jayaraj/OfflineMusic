@@ -32,18 +32,29 @@ import com.example.offlinemusic.downloader.models.DownloadableTrack
 import com.example.offlinemusic.downloader.models.DuplicatePromptData
 import com.example.offlinemusic.downloader.models.DuplicateResolution
 import com.example.offlinemusic.downloader.models.SpotifyPlaylistInfo
+import com.example.offlinemusic.data.model.AlbumStat
+import com.example.offlinemusic.data.model.ArtistStat
+import com.example.offlinemusic.data.model.GenreStat
+import com.example.offlinemusic.data.model.ListeningOverviewStats
+import com.example.offlinemusic.data.model.MoodStat
+import com.example.offlinemusic.data.model.PlayHistoryItem
+import com.example.offlinemusic.data.model.SongStat
+import com.example.offlinemusic.data.model.StatsTimeRange
 import com.example.offlinemusic.downloader.models.SyncedLyrics
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Calendar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -51,7 +62,8 @@ enum class DetailScreenType {
     PLAYLIST,
     ALBUM,
     ARTIST,
-    DOWNLOADS
+    DOWNLOADS,
+    STATISTICS
 }
 
 data class SearchResults(
@@ -66,6 +78,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = MusicPreferences(application)
     val scanner = MusicScanner(application)
     val playerManager = MusicPlayerManager.getInstance(application)
+    val metaEnricher = com.example.offlinemusic.data.remote.MetaEnricherManager.getInstance(application)
+
+    val serverStatus = metaEnricher.serverStatus
+    val enrichmentStats = metaEnricher.enrichmentStats
+    val isEnriching = metaEnricher.isEnriching
+    val currentEnrichingTitle = metaEnricher.currentEnrichingTitle
 
     private val _selectedFolderUri = MutableStateFlow(preferences.selectedFolderUri)
     val selectedFolderUri: StateFlow<Uri?> = _selectedFolderUri.asStateFlow()
@@ -171,6 +189,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _currentLyricsIndex = MutableStateFlow(-1)
     val currentLyricsIndex: StateFlow<Int> = _currentLyricsIndex.asStateFlow()
+
+    private val _statsTimeRange = MutableStateFlow(StatsTimeRange.ALL_TIME)
+    val statsTimeRange: StateFlow<StatsTimeRange> = _statsTimeRange.asStateFlow()
+
+    private fun getSinceTimestamp(range: StatsTimeRange): Long {
+        val now = System.currentTimeMillis()
+        return when (range) {
+            StatsTimeRange.ALL_TIME -> 0L
+            StatsTimeRange.LAST_30_DAYS -> now - 30L * 24 * 60 * 60 * 1000L
+            StatsTimeRange.LAST_7_DAYS -> now - 7L * 24 * 60 * 60 * 1000L
+            StatsTimeRange.TODAY -> {
+                val cal = Calendar.getInstance()
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                cal.timeInMillis
+            }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val listeningOverview: StateFlow<ListeningOverviewStats> = _statsTimeRange
+        .flatMapLatest { range ->
+            val since = getSinceTimestamp(range)
+            scanner.repository.getListeningOverview(since)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ListeningOverviewStats())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val topSongsStats: StateFlow<List<SongStat>> = _statsTimeRange
+        .flatMapLatest { range ->
+            val since = getSinceTimestamp(range)
+            scanner.repository.getTopSongsStats(since, 50)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val topArtistsStats: StateFlow<List<ArtistStat>> = _statsTimeRange
+        .flatMapLatest { range ->
+            val since = getSinceTimestamp(range)
+            scanner.repository.getTopArtistsStats(since, 50)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val topMoodsStats: StateFlow<List<MoodStat>> = _statsTimeRange
+        .flatMapLatest { range ->
+            val since = getSinceTimestamp(range)
+            scanner.repository.getTopMoodsStats(since, 20)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val topGenresStats: StateFlow<List<GenreStat>> = _statsTimeRange
+        .flatMapLatest { range ->
+            val since = getSinceTimestamp(range)
+            scanner.repository.getTopGenresStats(since, 20)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val topAlbumsStats: StateFlow<List<AlbumStat>> = _statsTimeRange
+        .flatMapLatest { range ->
+            val since = getSinceTimestamp(range)
+            scanner.repository.getTopAlbumsStats(since, 30)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val playHistory: StateFlow<List<PlayHistoryItem>> = scanner.repository.getRecentHistory(100)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private var onlineSearchJob: Job? = null
 
@@ -301,6 +384,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
+        // Start MetaEnricher Keep-Alive Session (wakes up Render and enriches unverified tracks in background)
+        metaEnricher.startSession(viewModelScope)
+
         // Clean zero-song artists, normalize existing artist profiles, and sync folder/liked playlists on startup
         viewModelScope.launch {
             scanner.repository.normalizeAndCleanArtistProfiles()
@@ -562,13 +648,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val streamUrl = downloadManager.getStreamUrlForTrack(track)
             if (!streamUrl.isNullOrBlank()) {
+                val durMs = if (track.durationMs > 0L) track.durationMs else com.example.offlinemusic.downloader.engine.YouTubeDownloader.parseDurationStringToMs(track.duration)
                 withContext(Dispatchers.Main) {
                     playerManager.playStreamingTrack(
                         trackId = track.id,
                         title = track.title,
                         artist = track.artist,
                         streamUrl = streamUrl,
-                        durationMs = track.durationMs,
+                        durationMs = durMs,
                         thumbnailUrl = track.thumbnailUrl
                     )
                 }
@@ -923,6 +1010,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
+    fun openStatisticsScreen() {
+        _detailStack.value = _detailStack.value.filter { it != DetailScreenType.STATISTICS } + DetailScreenType.STATISTICS
+    }
+
+    fun closeStatisticsScreen() {
+        _detailStack.value = _detailStack.value.filter { it != DetailScreenType.STATISTICS }
+    }
+
+    fun setStatsTimeRange(range: StatsTimeRange) {
+        _statsTimeRange.value = range
+    }
+
+    fun openAlbumDetailById(albumId: String) {
+        val matchingAlbum = allAlbums.value.find { it.id == albumId }
+        if (matchingAlbum != null) {
+            openAlbumDetail(matchingAlbum)
+        } else {
+            viewModelScope.launch {
+                val albumWithSongs = scanner.getAlbumWithSongs(albumId)
+                if (albumWithSongs != null) {
+                    _selectedAlbumDetail.value = albumWithSongs
+                    _detailStack.value = _detailStack.value.filter { it != DetailScreenType.ALBUM } + DetailScreenType.ALBUM
+                }
+            }
+        }
+    }
+
+    fun playSongById(trackId: String) {
+        viewModelScope.launch {
+            val song = allSongs.value.find { it.id == trackId } ?: scanner.repository.getSongById(trackId)
+            if (song != null) {
+                playSong(song, listOf(song))
+            }
+        }
+    }
+
     fun createPlaylist(name: String) {
         viewModelScope.launch {
             val id = scanner.repository.createPlaylist(name)
@@ -1055,18 +1178,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _songForEditMetadata.value = null
     }
 
+    /**
+     * Priority enrichment triggered by user clicking Enrich button.
+     */
+    fun enrichSongImmediately(trackId: String) {
+        viewModelScope.launch {
+            val updated = metaEnricher.enrichSongImmediately(trackId)
+            if (updated != null) {
+                playerManager.updateSongMetadata(updated)
+                if (_selectedAlbumDetail.value != null) {
+                    _selectedAlbumDetail.value = scanner.getAlbumWithSongs(_selectedAlbumDetail.value!!.id)
+                }
+                if (_selectedPlaylistDetail.value != null) {
+                    _selectedPlaylistDetail.value = scanner.repository.getPlaylistWithSongs(_selectedPlaylistDetail.value!!.id)
+                }
+            }
+        }
+    }
+
+    fun wakeUpMetaEnricher() {
+        viewModelScope.launch {
+            metaEnricher.wakeUpServer()
+        }
+    }
+
+    fun triggerBackgroundEnrichment() {
+        metaEnricher.startSession(viewModelScope)
+    }
+
     fun updateTrackMetadata(
         trackId: String,
         newTitle: String,
         rawArtistString: String,
         newAlbum: String?,
         newGenre: String?,
-        newArtworkUri: Uri?
+        newArtworkUri: Uri?,
+        newYear: Int? = null,
+        newProducer: String? = null,
+        newComposer: String? = null,
+        newLanguage: String? = null,
+        newMood: String? = null,
+        newSource: String? = null,
+        newLyricsAvailable: Boolean? = null,
+        newMetachecked: Boolean? = null
     ) {
         viewModelScope.launch {
-            val updatedSong = scanner.updateTrackMetadata(trackId, newTitle, rawArtistString, newAlbum, newGenre, newArtworkUri)
+            val updatedSong = scanner.updateTrackMetadata(
+                trackId = trackId,
+                newTitle = newTitle,
+                rawArtistString = rawArtistString,
+                newAlbum = newAlbum,
+                newGenre = newGenre,
+                newArtworkUri = newArtworkUri,
+                newYear = newYear,
+                newProducer = newProducer,
+                newComposer = newComposer,
+                newLanguage = newLanguage,
+                newMood = newMood,
+                newSource = newSource,
+                newLyricsAvailable = newLyricsAvailable,
+                newMetachecked = newMetachecked
+            )
             if (updatedSong != null) {
                 playerManager.updateSongMetadata(updatedSong)
+                _allSongs.value = _allSongs.value.map { if (it.id == updatedSong.id) updatedSong else it }
                 if (_selectedAlbumDetail.value != null) {
                     _selectedAlbumDetail.value = scanner.getAlbumWithSongs(_selectedAlbumDetail.value!!.id)
                 }
@@ -1098,6 +1273,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshAlbums()
             if (_selectedAlbumDetail.value?.id == MusicDatabase.ALBUM_ID_LIKED) {
                 _selectedAlbumDetail.value = scanner.getAlbumWithSongs(MusicDatabase.ALBUM_ID_LIKED)
+            }
+            val currentPlaylist = _selectedPlaylistDetail.value
+            if (currentPlaylist != null && (currentPlaylist.id == "liked_songs" || currentPlaylist.isLikedSpecial)) {
+                _selectedPlaylistDetail.value = scanner.repository.getPlaylistWithSongs(currentPlaylist.id)
             }
         }
     }

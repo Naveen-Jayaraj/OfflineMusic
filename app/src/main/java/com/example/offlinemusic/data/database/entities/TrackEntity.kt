@@ -63,5 +63,16 @@ data class TrackEntity(
     @ColumnInfo(name = "relative_path")
     val relativePath: String = "",
     @ColumnInfo(name = "lyrics_uri")
-    val lyricsUri: String? = null
+    val lyricsUri: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
+    val genre: String? = null,
+    val producer: String? = null,
+    val composer: String? = null,
+    val language: String? = null,
+    val mood: String? = null,
+    val source: String = "LOCAL",
+    @ColumnInfo(name = "lyrics_available")
+    val lyricsAvailable: Boolean = false,
+    val metachecked: Boolean = false
 )

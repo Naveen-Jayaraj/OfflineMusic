@@ -441,7 +441,7 @@ fun SpotifyPlaylistPreviewCard(
                 ) {
                     Text(
                         text = "SPOTIFY PLAYLIST DETECTED",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.ExtraBold),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
                         color = spotifyGreen
                     )
                 }
@@ -632,7 +632,7 @@ fun SyncedLyricsView(
             val isActive = index == currentActiveIndex
             val color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
             val size = if (isActive) 24.sp else 18.sp
-            val weight = if (isActive) FontWeight.ExtraBold else FontWeight.SemiBold
+            val weight = if (isActive) FontWeight.SemiBold else FontWeight.SemiBold
 
             Box(
                 modifier = Modifier

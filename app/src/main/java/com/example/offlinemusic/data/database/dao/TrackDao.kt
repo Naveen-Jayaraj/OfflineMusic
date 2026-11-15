@@ -69,6 +69,9 @@ interface TrackDao {
     @Query("UPDATE tracks SET play_count = play_count + 1, last_played_timestamp = :timestamp WHERE id = :trackId")
     suspend fun incrementPlayCount(trackId: String, timestamp: Long)
 
+    @Query("UPDATE tracks SET last_played_timestamp = :timestamp WHERE id = :trackId")
+    suspend fun updateLastPlayedTimestamp(trackId: String, timestamp: Long)
+
     @Query("UPDATE tracks SET album_id = :newAlbumId WHERE album_id = :oldAlbumId")
     suspend fun updateAlbumForTracks(oldAlbumId: String, newAlbumId: String): Int
 
@@ -80,6 +83,18 @@ interface TrackDao {
 
     @Query("UPDATE tracks SET lyrics_uri = :lyricsUri WHERE id = :trackId")
     suspend fun updateLyricsUri(trackId: String, lyricsUri: String?)
+
+    @Query("SELECT * FROM tracks WHERE metachecked = 0 AND metadata_status NOT IN ('CONFIRMED', 'ENRICHED', 'MANUAL') ORDER BY date_added DESC")
+    suspend fun getUnenrichedTracks(): List<TrackEntity>
+
+    @Query("UPDATE tracks SET metachecked = 1, metadata_status = 'CONFIRMED' WHERE id = :trackId")
+    suspend fun markTrackEnriched(trackId: String)
+
+    @Query("SELECT COUNT(*) FROM tracks WHERE metachecked = 1 OR metadata_status IN ('CONFIRMED', 'ENRICHED', 'MANUAL')")
+    suspend fun getEnrichedCount(): Int
+
+    @Query("SELECT COUNT(*) FROM tracks WHERE metachecked = 0 AND metadata_status NOT IN ('CONFIRMED', 'ENRICHED', 'MANUAL')")
+    suspend fun getUnenrichedCount(): Int
 
     @Query("DELETE FROM tracks")
     suspend fun deleteAllTracks()

@@ -9,6 +9,8 @@ import com.example.offlinemusic.data.database.entities.PlaylistEntity
 import com.example.offlinemusic.data.database.entities.PlaylistTrackEntity
 import com.example.offlinemusic.data.model.Song
 import com.example.offlinemusic.data.repository.MusicScanner
+import com.example.offlinemusic.data.remote.ApiClient
+import com.example.offlinemusic.data.remote.LyricQuery
 import com.example.offlinemusic.downloader.engine.FuzzyMatcher
 import com.example.offlinemusic.downloader.engine.LrclibClient
 import com.example.offlinemusic.downloader.engine.LucidaDownloader
@@ -557,27 +559,49 @@ class DownloadManager private constructor(private val context: Context) {
             current + (downloadId to existing.copy(status = DownloadStatus.ENRICHING, progress = 0.85f))
         }
 
-        // Enrich metadata (clean title, canonical artist, album, year, genre, and high-res cover art)
+        // Enrich metadata (clean title, canonical artist, album, year, genre, and high-res cover art) via MetaEnricher
         val enriched = MetadataEnricher.enrich(
             rawTitle = track.title,
             rawArtist = track.artist,
-            fallbackThumbnailUrl = track.thumbnailUrl
+            fallbackThumbnailUrl = track.thumbnailUrl,
+            durationMs = track.durationMs
         )
 
-        // Fetch Lyrics (.lrc)
+        // Fetch Lyrics (.lrc) - Try MetaEnricher first, fallback to LrclibClient
         val lrcFile = File(targetDir, "${safeFilename}.lrc")
+        var lyricsSaved = false
         try {
-            val durationSec = track.durationMs / 1000
-            val lyrics = LrclibClient.fetchLyrics(
-                title = enriched.title,
-                artist = enriched.artist,
-                album = enriched.album.ifBlank { null },
-                durationSeconds = if (durationSec > 0) durationSec else null
+            val lyricRes = ApiClient.metaEnricherApi.getLyrics(
+                LyricQuery(
+                    title = enriched.title,
+                    artist = enriched.artist,
+                    album = enriched.album.ifBlank { null },
+                    durationMs = if (track.durationMs > 0) track.durationMs else null
+                )
             )
-            if (lyrics != null) {
-                LrclibClient.saveToLrcFile(lyrics, lrcFile)
+            if (lyricRes.lyricsAvailable) {
+                val lrcText = lyricRes.syncedLyrics ?: lyricRes.plainLyrics
+                if (!lrcText.isNullOrBlank()) {
+                    lrcFile.writeText(lrcText)
+                    lyricsSaved = true
+                }
             }
         } catch (_: Exception) {}
+
+        if (!lyricsSaved) {
+            try {
+                val durationSec = track.durationMs / 1000
+                val lyrics = LrclibClient.fetchLyrics(
+                    title = enriched.title,
+                    artist = enriched.artist,
+                    album = enriched.album.ifBlank { null },
+                    durationSeconds = if (durationSec > 0) durationSec else null
+                )
+                if (lyrics != null) {
+                    LrclibClient.saveToLrcFile(lyrics, lrcFile)
+                }
+            } catch (_: Exception) {}
+        }
 
         // Download cover art into internal app cache (keeps music folder free of loose image clutter)
         val artworkCacheDir = File(context.cacheDir, "artwork").apply { mkdirs() }
@@ -670,6 +694,7 @@ class DownloadManager private constructor(private val context: Context) {
                     }
                     DuplicateResolution.REPLACE_EXISTING -> {
                         // Replace existing song in DB with new audio file & metadata
+                        val trackSource = if (track.source == DownloadSource.LUCIDA) "LUCIDA" else "YOUTUBE"
                         val updatedSong = musicScanner.replaceExistingTrackWithDownload(
                             existingTrackId = duplicateResult.matchedSong.id,
                             newAudioFile = targetAudioFile,
@@ -677,7 +702,15 @@ class DownloadManager private constructor(private val context: Context) {
                             newArtist = enriched.artist,
                             newAlbum = enriched.album.ifBlank { "Downloads" },
                             newArtworkFile = if (artworkFile.exists()) artworkFile else null,
-                            newLrcFile = if (lrcFile.exists()) lrcFile else null
+                            newLrcFile = if (lrcFile.exists()) lrcFile else null,
+                            newYear = enriched.year,
+                            newGenre = enriched.genre,
+                            newProducer = enriched.producer,
+                            newComposer = enriched.composer,
+                            newLanguage = enriched.language,
+                            newMood = enriched.mood,
+                            newSource = trackSource,
+                            newMetachecked = enriched.metachecked
                         )
 
                         exportToPublicMusicFolder(
@@ -716,13 +749,22 @@ class DownloadManager private constructor(private val context: Context) {
         }
 
         // Register in Central Library without Duplicates
+        val downloadSourceStr = if (track.source == DownloadSource.LUCIDA) "LUCIDA" else "YOUTUBE"
         val registeredSong = musicScanner.registerDownloadedTrack(
             audioFile = targetAudioFile,
             title = enriched.title,
             artist = enriched.artist,
             album = enriched.album.ifBlank { "Downloads" },
             artworkFile = if (artworkFile.exists()) artworkFile else null,
-            lrcFile = if (lrcFile.exists()) lrcFile else null
+            lrcFile = if (lrcFile.exists()) lrcFile else null,
+            year = enriched.year,
+            genre = enriched.genre,
+            producer = enriched.producer,
+            composer = enriched.composer,
+            language = enriched.language,
+            mood = enriched.mood,
+            source = downloadSourceStr,
+            metachecked = enriched.metachecked
         )
 
         // Notify Android system MediaScanner
