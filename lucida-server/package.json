@@ -1,0 +1,16 @@
+{
+  "name": "lucida-server",
+  "version": "1.0.0",
+  "description": "Lucida NPM REST Bridge for OfflineMusic",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "lucida": "^2.0.0-54",
+    "undici": "^6.19.4"
+  }
+}

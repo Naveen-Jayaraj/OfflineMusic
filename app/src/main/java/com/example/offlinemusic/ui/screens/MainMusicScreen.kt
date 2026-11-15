@@ -73,7 +73,6 @@ fun MainMusicScreen(
     val duplicatePrompt by viewModel.duplicatePrompt.collectAsState()
     val onlineSearchResults by viewModel.onlineSearchResults.collectAsState()
     val isOnlineSearching by viewModel.isOnlineSearching.collectAsState()
-    val lucidaSearchIssue by viewModel.lucidaSearchIssue.collectAsState()
     val detectedSpotifyPlaylist by viewModel.detectedSpotifyPlaylist.collectAsState()
     val isFetchingSpotifyPlaylist by viewModel.isFetchingSpotifyPlaylist.collectAsState()
     val downloadSourceFilter by viewModel.downloadSourceFilter.collectAsState()
@@ -304,8 +303,6 @@ fun MainMusicScreen(
                                     onDownloadSpotifyPlaylist = { viewModel.downloadSpotifyPlaylist(it) },
                                     onlineSearchResults = onlineSearchResults,
                                     isOnlineSearching = isOnlineSearching,
-                                    lucidaSearchIssue = lucidaSearchIssue,
-                                    onLucidaVerified = viewModel::finishLucidaVerification,
                                     downloads = downloads,
                                     onDownloadTrack = { viewModel.downloadTrack(it) },
                                     onCancelDownload = { viewModel.cancelDownload(it) },

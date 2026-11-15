@@ -76,11 +76,6 @@ data class SearchResults(
     val albums: List<Album> = emptyList()
 )
 
-enum class LucidaSearchIssue {
-    VERIFICATION_REQUIRED,
-    UNAVAILABLE
-}
-
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val preferences = MusicPreferences(application)
@@ -187,9 +182,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isOnlineSearching = MutableStateFlow(false)
     val isOnlineSearching: StateFlow<Boolean> = _isOnlineSearching.asStateFlow()
-
-    private val _lucidaSearchIssue = MutableStateFlow<LucidaSearchIssue?>(null)
-    val lucidaSearchIssue: StateFlow<LucidaSearchIssue?> = _lucidaSearchIssue.asStateFlow()
 
     private val _detectedSpotifyPlaylist = MutableStateFlow<SpotifyPlaylistInfo?>(null)
     val detectedSpotifyPlaylist: StateFlow<SpotifyPlaylistInfo?> = _detectedSpotifyPlaylist.asStateFlow()
@@ -831,17 +823,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    internal fun finishLucidaVerification(query: String, searchPage: String) {
-        if (query.trim() != _searchQuery.value.trim() ||
-            _lucidaSearchIssue.value != LucidaSearchIssue.VERIFICATION_REQUIRED
-        ) return
-        triggerOnlineSearch(query, verifiedLucidaPage = searchPage)
-    }
-
-    private fun triggerOnlineSearch(query: String, verifiedLucidaPage: String? = null) {
+    private fun triggerOnlineSearch(query: String) {
         onlineSearchJob?.cancel()
         _onlineSearchResults.value = emptyList()
-        _lucidaSearchIssue.value = null
         val trimmed = query.trim()
 
         if (SpotifyPlaylistClient.isSpotifyPlaylistUrl(trimmed)) {
@@ -870,14 +854,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val filter = _downloadSourceFilter.value
         onlineSearchJob = viewModelScope.launch {
             try {
-                if (verifiedLucidaPage == null) delay(350)
+                delay(300)
 
                 when (filter) {
                     DownloadSourceFilter.YOUTUBE_ONLY -> {
                         _onlineSearchResults.value = YouTubeDownloader.search(trimmed, limit = 15)
                     }
                     DownloadSourceFilter.LUCIDA_ONLY -> {
-                        _onlineSearchResults.value = searchLucida(trimmed, limit = 15, verifiedPage = verifiedLucidaPage)
+                        _onlineSearchResults.value = searchLucida(trimmed, limit = 15)
                     }
                     DownloadSourceFilter.BOTH -> coroutineScope {
                         fun publishResults(tracks: List<DownloadableTrack>) {
@@ -890,7 +874,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val youtube = YouTubeDownloader.search(trimmed, limit = 10)
                             publishResults(youtube + _onlineSearchResults.value)
                         }
-                        val lucida = searchLucida(trimmed, limit = 10, verifiedPage = verifiedLucidaPage)
+                        val lucida = searchLucida(trimmed, limit = 10)
                         publishResults(_onlineSearchResults.value + lucida)
                     }
                 }
@@ -905,25 +889,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun searchLucida(
-        query: String,
-        limit: Int,
-        verifiedPage: String?
-    ): List<DownloadableTrack> {
-        val browserResults = verifiedPage?.let { page ->
-            withContext(Dispatchers.Default) {
-                runCatching { LucidaDownloader.parseSearchPage(page, limit) }.getOrNull()
-            }
-        }
-        if (browserResults != null) return browserResults
-
+    private suspend fun searchLucida(query: String, limit: Int): List<DownloadableTrack> {
         return downloadManager.lucidaDownloader.search(query, limit).getOrElse { error ->
-            _lucidaSearchIssue.value = if (error is LucidaDownloader.VerificationRequired) {
-                LucidaSearchIssue.VERIFICATION_REQUIRED
-            } else {
-                Log.w("MainViewModel", "Lucida search failed", error)
-                LucidaSearchIssue.UNAVAILABLE
-            }
+            Log.w("MainViewModel", "Lucida search failed", error)
             emptyList()
         }
     }

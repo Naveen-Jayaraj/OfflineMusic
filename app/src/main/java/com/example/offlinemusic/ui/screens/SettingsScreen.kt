@@ -580,9 +580,9 @@ internal fun SettingsScreen(
                                 )
                                 Text(
                                     text = when (option) {
-                                        DownloadSourceFilter.BOTH -> "Search and download from both YouTube and Lucida Lossless"
+                                        DownloadSourceFilter.BOTH -> "Search and download from both YouTube and Lucida (NPM)"
                                         DownloadSourceFilter.YOUTUBE_ONLY -> "Only search and stream from YouTube Audio"
-                                        DownloadSourceFilter.LUCIDA_ONLY -> "Only search and stream lossless audio from Lucida"
+                                        DownloadSourceFilter.LUCIDA_ONLY -> "Only search and stream audio from Lucida (NPM)"
                                     },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant

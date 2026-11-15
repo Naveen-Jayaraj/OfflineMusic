@@ -1,335 +1,337 @@
 package com.example.offlinemusic.downloader.engine
 
 import android.content.Context
-import android.util.Base64
-import android.webkit.CookieManager
-import android.webkit.WebSettings
+import android.util.Log
+import com.example.offlinemusic.data.remote.ApiClient
 import com.example.offlinemusic.downloader.models.DownloadSource
 import com.example.offlinemusic.downloader.models.DownloadableTrack
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
-import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
-import com.google.gson.JsonPrimitive
-import com.google.gson.stream.JsonReader
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.io.StringReader
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
-import kotlin.coroutines.resume
 
+/**
+ * Modern Lucida Downloader engine powered by the official Lucida package (https://www.npmjs.com/package/lucida).
+ *
+ * It connects to the Lucida NPM REST Bridge (lucida-server) when available,
+ * and includes a native direct client for zero-dependency standalone execution.
+ */
 internal class LucidaDownloader(context: Context) {
 
-    private val browserUserAgent by lazy {
-        runCatching { WebSettings.getDefaultUserAgent(context) }.getOrDefault(USER_AGENT)
-    }
-    private val cookieManager by lazy { runCatching { CookieManager.getInstance() }.getOrNull() }
-
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .followRedirects(true)
-        .addNetworkInterceptor { chain ->
-            val request = chain.request()
-            val url = request.url
-            if (!url.isHttps || url.host != HOST || url.port != 443) {
-                return@addNetworkInterceptor chain.proceed(request)
-            }
-
-            // Use the same browser identity as the in-app verification page.
-            val clearance = cookieManager?.getCookie(url.toString())
-                ?.split(';')
-                ?.firstOrNull { it.trimStart().startsWith("cf_clearance=") }
-                ?.trim()
-            val verifiedRequest = request.newBuilder().header("User-Agent", browserUserAgent)
-            clearance?.let { verifiedRequest.header("Cookie", it) }
-            chain.proceed(verifiedRequest.build())
-        }
         .build()
-    private val searchClient = httpClient.newBuilder().callTimeout(12, TimeUnit.SECONDS).build()
 
-    class VerificationRequired : IOException("Lucida requires browser verification")
+    private val searchClient = httpClient.newBuilder()
+        .callTimeout(10, TimeUnit.SECONDS)
+        .build()
 
-    suspend fun search(query: String, limit: Int = 5): Result<List<DownloadableTrack>> {
-        if (query.isBlank() || limit <= 0) return Result.success(emptyList())
+    @Volatile
+    private var cachedSoundcloudClientId: String? = null
 
-        val request = Request.Builder()
-            .url(searchUrl(query))
-            .header("Referer", "$BASE_URL/")
-            .build()
-        return suspendCancellableCoroutine { continuation ->
-            val call = searchClient.newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    continuation.resume(Result.failure(e))
+    /**
+     * Search tracks via Lucida NPM Bridge or native streamer
+     */
+    suspend fun search(query: String, limit: Int = 10): Result<List<DownloadableTrack>> = withContext(Dispatchers.IO) {
+        if (query.isBlank() || limit <= 0) return@withContext Result.success(emptyList())
+
+        // 1. Try Lucida NPM REST Bridge first (e.g. local or remote backend)
+        for (baseUrl in getCandidateServerUrls()) {
+            try {
+                val results = searchViaServer(baseUrl, query, limit)
+                if (results.isNotEmpty()) {
+                    return@withContext Result.success(results)
                 }
-
-                override fun onResponse(call: Call, response: Response) {
-                    continuation.resume(runCatching { response.use { readSearchResponse(it, limit) } })
-                }
-            })
-        }
-    }
-
-    companion object {
-        private const val HOST = "lucida.to"
-        private const val BASE_URL = "https://$HOST"
-        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        private val TOKEN_REGEX = Pattern.compile("\\btoken\"?\\s*:\\s*\"([^\"]+)\"")
-        private val EXPIRY_REGEX = Pattern.compile("\\btokenExpiry\"?\\s*:\\s*(\\d+)")
-        private val DATA_NODE = Regex("""\{\s*["']?type["']?\s*:\s*["']data["']\s*,\s*["']?data["']?\s*:\s*(?=\{)""")
-
-        fun searchUrl(query: String) = "$BASE_URL/search".toHttpUrl().newBuilder()
-            .addQueryParameter("service", "amazon")
-            .addQueryParameter("query", query.trim())
-            .build()
-
-        fun readSearchResponse(response: Response, limit: Int): List<DownloadableTrack> {
-            if (response.header("cf-mitigated").equals("challenge", ignoreCase = true)) {
-                throw VerificationRequired()
+            } catch (e: Exception) {
+                Log.d(TAG, "Lucida server check on $baseUrl skipped: ${e.message}")
             }
-            if (!response.isSuccessful) throw IOException("Lucida search returned HTTP ${response.code}")
-            val page = response.body?.string() ?: throw IOException("Lucida returned an empty search page")
-            return parseSearchPage(page, limit)
         }
 
-        fun parseSearchPage(page: String, limit: Int): List<DownloadableTrack> {
-            if (limit <= 0) return emptyList()
-
-            // Read each SvelteKit data node independently of its index or the surrounding script.
-            for (match in DATA_NODE.findAll(page)) {
-                val serializedData = page.substring(match.range.last + 1)
-                val data = try {
-                    JsonParser.parseReader(JsonReader(StringReader(serializedData))) as? JsonObject
-                } catch (_: JsonParseException) {
-                    null
-                } ?: continue
-
-                val envelope = (data.get("results") as? JsonObject)
-                    ?: data.takeIf { it.has("tracks") }
-                    ?: continue
-                val success = envelope.get("success") as? JsonPrimitive
-                if (success?.isBoolean == true && !success.asBoolean) {
-                    throw IOException("Lucida's Amazon Music search failed")
-                }
-                val results = (envelope.get("results") as? JsonObject) ?: envelope
-                val tracks = results.get("tracks") as? JsonArray ?: continue
-                val matches = tracks.asSequence()
-                    .mapNotNull { it as? JsonObject }
-                    .mapNotNull(::parseTrack)
-                    .distinctBy { it.id }
-                    .take(limit)
-                    .toList()
-                if (!tracks.isEmpty && matches.isEmpty()) {
-                    throw IOException("Lucida search returned no usable track links")
-                }
-                return matches
-            }
-            throw IOException("Lucida search results were missing from the page")
+        // 2. Native Lucida Soundcloud streamer fallback (matches lucida/streamers/soundcloud)
+        try {
+            val tracks = searchViaSoundcloudStreamer(query, limit)
+            Result.success(tracks)
+        } catch (e: Exception) {
+            Log.w(TAG, "Lucida native Soundcloud search failed", e)
+            Result.failure(e)
         }
-
-        private fun parseTrack(track: JsonObject): DownloadableTrack? {
-            val url = track.string("url")
-            if (url.toHttpUrlOrNull()?.isHttps != true) return null
-
-            val album = track.get("album") as? JsonObject
-            val artists = (track.get("artists") as? JsonArray)?.mapNotNull { artist ->
-                (artist as? JsonObject)?.string("name")?.takeIf { it.isNotBlank() }
-            }.orEmpty()
-            return DownloadableTrack(
-                id = "lucida_${url.hashCode()}",
-                title = track.string("title").ifBlank { "Unknown Title" },
-                artist = artists.joinToString(", ").ifBlank { "Unknown Artist" },
-                album = album?.string("title").orEmpty(),
-                source = DownloadSource.LUCIDA,
-                sourceUrl = url,
-                quality = "Lossless FLAC (Amazon Music)",
-                thumbnailUrl = album?.string("cover")?.takeIf { it.isNotBlank() }
-            )
-        }
-
-        private fun JsonObject.string(name: String): String =
-            (get(name) as? JsonPrimitive)?.takeIf { it.isString }?.asString.orEmpty()
     }
 
     /**
-     * Download track directly from Lucida lossless stream pipeline
+     * Download track audio stream from Lucida
      */
     suspend fun downloadTrack(
         trackUrl: String,
         targetFile: File,
         onProgress: (progress: Float, downloaded: Long, total: Long) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
-        try {
-            val pageUrl = BASE_URL.toHttpUrl().newBuilder().addQueryParameter("url", trackUrl).build()
-            val pageReq = Request.Builder()
-                .url(pageUrl)
-                .header("User-Agent", USER_AGENT)
-                .header("Referer", "$BASE_URL/")
-                .header("Origin", BASE_URL)
-                .build()
-
-            val html = httpClient.newCall(pageReq).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    return@withContext Result.failure(Exception("Failed to load Lucida page, status ${resp.code}"))
-                }
-                resp.body?.string() ?: ""
-            }
-
-            val tokenMatcher = TOKEN_REGEX.matcher(html)
-            val expiryMatcher = EXPIRY_REGEX.matcher(html)
-
-            if (!tokenMatcher.find() || !expiryMatcher.find()) {
-                return@withContext Result.failure(Exception("Could not extract authorization token from Lucida"))
-            }
-
-            val rawToken = tokenMatcher.group(1) ?: return@withContext Result.failure(Exception("Missing token"))
-            val expiry = expiryMatcher.group(1)?.toLongOrNull() ?: 0L
-
-            // Double Base64 decode to retrieve primary token
-            val step1 = Base64.decode(rawToken, Base64.DEFAULT)
-            val step2 = Base64.decode(step1, Base64.DEFAULT)
-            val primaryToken = String(step2, Charsets.UTF_8)
-
-            // Initialize server stream rip
-            val payload = JSONObject().apply {
-                put("url", trackUrl)
-                put("metadata", true)
-                put("compat", false)
-                put("private", false)
-                put("handoff", true)
-                put("account", JSONObject().apply {
-                    put("type", "country")
-                    put("id", "auto")
-                })
-                put("upload", JSONObject().apply {
-                    put("enabled", false)
-                    put("service", "pixeldrain")
-                })
-                put("downscale", "original")
-                put("token", JSONObject().apply {
-                    put("primary", primaryToken)
-                    put("expiry", expiry)
-                })
-            }
-
-            val initUrl = "$BASE_URL/api/load?url=%2Fapi%2Ffetch%2Fstream%2Fv2"
-            val initReq = Request.Builder()
-                .url(initUrl)
-                .header("User-Agent", USER_AGENT)
-                .header("Referer", "$BASE_URL/")
-                .header("Origin", BASE_URL)
-                .post(payload.toString().toRequestBody("application/json".toMediaType()))
-                .build()
-
-            val initResStr = httpClient.newCall(initReq).execute().use { it.body?.string() ?: "" }
-            val initJson = JSONObject(initResStr)
-
-            if (initJson.has("success") && !initJson.optBoolean("success")) {
-                val err = initJson.optString("error", "Failed to initialize server stream")
-                return@withContext Result.failure(Exception("Lucida error: $err"))
-            }
-
-            val handoff = initJson.optString("handoff", "")
-            val serverName = initJson.optString("server").ifBlank { initJson.optString("name", "katze") }
-
-            if (handoff.isBlank()) {
-                return@withContext Result.failure(Exception("Missing server handoff ID"))
-            }
-
-            // Poll status until completed
-            val statusUrl = "$BASE_URL/api/load?url=%2Fapi%2Ffetch%2Frequest%2F$handoff&force=$serverName"
-            val startTime = System.currentTimeMillis()
-            val timeout = 25_000L // 25 seconds for fast fallback
-            android.util.Log.d("LucidaDownloader", "Polling Lucida rip status for handoff: $handoff")
-
-            var completed = false
-            while (System.currentTimeMillis() - startTime < timeout) {
-                delay(750)
-                val statusReq = Request.Builder()
-                    .url(statusUrl)
+        // 1. Try downloading via Lucida NPM Bridge
+        for (baseUrl in getCandidateServerUrls()) {
+            try {
+                val streamUrl = "$baseUrl/api/stream?url=${java.net.URLEncoder.encode(trackUrl, "UTF-8")}"
+                val req = Request.Builder()
+                    .url(streamUrl)
                     .header("User-Agent", USER_AGENT)
-                    .header("Referer", "$BASE_URL/")
                     .build()
+                val resp = httpClient.newCall(req).execute()
+                if (resp.isSuccessful) {
+                    val body = resp.body ?: continue
+                    val contentLength = body.contentLength()
+                    var bytesCopied = 0L
 
-                val stStr = httpClient.newCall(statusReq).execute().use { it.body?.string() ?: "" }
-                val stJson = JSONObject(stStr)
-
-                val status = stJson.optString("status", "")
-                if (status == "completed") {
-                    completed = true
-                    android.util.Log.d("LucidaDownloader", "Lucida stream rip completed successfully")
-                    break
-                } else if (status == "error") {
-                    val msg = stJson.optString("message", "Unknown error during stream rip")
-                    android.util.Log.w("LucidaDownloader", "Lucida rip error: $msg")
-                    return@withContext Result.failure(Exception("Lucida rip failed: $msg"))
-                }
-            }
-
-            if (!completed) {
-                android.util.Log.w("LucidaDownloader", "Lucida stream timed out after 25s")
-                return@withContext Result.failure(Exception("Lucida stream timed out"))
-            }
-
-            // Download stream
-            val downloadUrl = "$BASE_URL/api/load?url=%2Fapi%2Ffetch%2Frequest%2F$handoff%2Fdownload&force=$serverName&redirect=true"
-            val dlReq = Request.Builder()
-                .url(downloadUrl)
-                .header("User-Agent", USER_AGENT)
-                .header("Referer", "$BASE_URL/")
-                .header("Accept", "*/*")
-                .build()
-
-            httpClient.newCall(dlReq).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    return@withContext Result.failure(Exception("Download failed with HTTP ${resp.code}"))
-                }
-
-                val body = resp.body ?: return@withContext Result.failure(Exception("Empty download body"))
-                val contentLength = body.contentLength()
-
-                targetFile.parentFile?.mkdirs()
-                java.io.BufferedOutputStream(FileOutputStream(targetFile), 64 * 1024).use { fos ->
-                    val buffer = ByteArray(64 * 1024)
-                    var bytesRead: Int
-                    var totalDownloaded = 0L
-
-                    java.io.BufferedInputStream(body.byteStream(), 64 * 1024).use { bis ->
-                        while (bis.read(buffer).also { bytesRead = it } != -1) {
-                            fos.write(buffer, 0, bytesRead)
-                            totalDownloaded += bytesRead
-                            if (contentLength > 0) {
-                                val prog = totalDownloaded.toFloat() / contentLength.toFloat()
-                                onProgress(prog, totalDownloaded, contentLength)
+                    body.byteStream().use { input ->
+                        FileOutputStream(targetFile).use { output ->
+                            val buffer = ByteArray(8 * 1024)
+                            var bytes = input.read(buffer)
+                            while (bytes >= 0) {
+                                output.write(buffer, 0, bytes)
+                                bytesCopied += bytes
+                                val prog = if (contentLength > 0) bytesCopied.toFloat() / contentLength else 0.5f
+                                onProgress(prog.coerceIn(0f, 1f), bytesCopied, contentLength)
+                                bytes = input.read(buffer)
                             }
                         }
                     }
-                    fos.flush()
+                    if (targetFile.exists() && targetFile.length() > 0) {
+                        return@withContext Result.success(targetFile)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.d(TAG, "Server stream on $baseUrl failed: ${e.message}")
+            }
+        }
 
-                onProgress(1.0f, targetFile.length(), targetFile.length())
-                Result.success(targetFile)
+        // 2. Native Lucida Soundcloud stream resolution fallback
+        try {
+            downloadViaNativeSoundcloud(trackUrl, targetFile, onProgress)
+        } catch (e: Exception) {
+            Log.e(TAG, "Native Lucida download failed", e)
+            Result.failure(e)
+        }
+    }
+
+    private fun getCandidateServerUrls(): List<String> {
+        return listOf(
+            "http://10.0.2.2:3000",   // Android Emulator host
+            "http://127.0.0.1:3000",  // Localhost (if termux/local)
+            "${ApiClient.BASE_URL}lucida".removeSuffix("/") // Render backend route if deployed
+        )
+    }
+
+    private fun searchViaServer(baseUrl: String, query: String, limit: Int): List<DownloadableTrack> {
+        val url = "$baseUrl/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&limit=$limit"
+        val req = Request.Builder().url(url).build()
+        val response = searchClient.newCall(req).execute()
+        if (!response.isSuccessful) return emptyList()
+
+        val jsonStr = response.body?.string() ?: return emptyList()
+        val array = JsonParser.parseString(jsonStr).asJsonArray
+        val tracks = mutableListOf<DownloadableTrack>()
+
+        for (elem in array) {
+            if (!elem.isJsonObject) continue
+            val obj = elem.asJsonObject
+            tracks.add(
+                DownloadableTrack(
+                    id = obj.get("id")?.asString ?: "lucida_${System.currentTimeMillis()}",
+                    title = obj.get("title")?.asString ?: "Unknown Title",
+                    artist = obj.get("artist")?.asString ?: "Unknown Artist",
+                    album = obj.get("album")?.asString.orEmpty(),
+                    durationMs = obj.get("durationMs")?.asLong ?: 0L,
+                    duration = obj.get("duration")?.asString.orEmpty(),
+                    source = DownloadSource.LUCIDA,
+                    sourceUrl = obj.get("sourceUrl")?.asString.orEmpty(),
+                    quality = obj.get("quality")?.asString ?: "Lucida Lossless",
+                    thumbnailUrl = obj.get("thumbnailUrl")?.takeIf { !it.isJsonNull }?.asString
+                )
+            )
+        }
+        return tracks
+    }
+
+    /**
+     * Native Lucida Soundcloud streamer implementation
+     */
+    private fun searchViaSoundcloudStreamer(query: String, limit: Int): List<DownloadableTrack> {
+        val clientId = getSoundcloudClientId() ?: return emptyList()
+        val searchUrl = "https://api-v2.soundcloud.com/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&offset=0&limit=$limit&client_id=$clientId"
+
+        val req = Request.Builder()
+            .url(searchUrl)
+            .header("User-Agent", USER_AGENT)
+            .header("Referer", "https://soundcloud.com/")
+            .build()
+
+        val resp = searchClient.newCall(req).execute()
+        if (!resp.isSuccessful) return emptyList()
+
+        val body = resp.body?.string() ?: return emptyList()
+        val root = JsonParser.parseString(body).asJsonObject
+        val collection = root.getAsJsonArray("collection") ?: return emptyList()
+
+        val results = mutableListOf<DownloadableTrack>()
+        for (item in collection) {
+            val obj = item as? JsonObject ?: continue
+            val kind = obj.get("kind")?.asString ?: continue
+            if (kind != "track") continue
+
+            val id = obj.get("id")?.asLong ?: continue
+            val title = obj.get("title")?.asString ?: "Unknown Track"
+            val permalink = obj.get("permalink_url")?.asString ?: continue
+            val user = obj.getAsJsonObject("user")
+            val artistName = user?.get("username")?.asString ?: "Unknown Artist"
+            val durationMs = obj.get("duration")?.asLong ?: 0L
+            val artworkUrl = obj.get("artwork_url")?.takeIf { !it.isJsonNull }?.asString
+                ?: user?.get("avatar_url")?.takeIf { !it.isJsonNull }?.asString
+
+            results.add(
+                DownloadableTrack(
+                    id = "lucida_sc_$id",
+                    title = title,
+                    artist = artistName,
+                    album = "",
+                    durationMs = durationMs,
+                    duration = formatDuration(durationMs),
+                    source = DownloadSource.LUCIDA,
+                    sourceUrl = permalink,
+                    quality = "Soundcloud (Lucida)",
+                    thumbnailUrl = artworkUrl?.replace("-large", "-t500x500")
+                )
+            )
+        }
+        return results
+    }
+
+    private fun downloadViaNativeSoundcloud(
+        trackUrl: String,
+        targetFile: File,
+        onProgress: (progress: Float, downloaded: Long, total: Long) -> Unit
+    ): Result<File> {
+        val clientId = getSoundcloudClientId() ?: throw IOException("Could not obtain Soundcloud client ID")
+
+        // 1. Resolve track metadata / transcodings
+        val resolveUrl = "https://api-v2.soundcloud.com/resolve?url=${java.net.URLEncoder.encode(trackUrl, "UTF-8")}&client_id=$clientId"
+        val req = Request.Builder()
+            .url(resolveUrl)
+            .header("User-Agent", USER_AGENT)
+            .header("Referer", "https://soundcloud.com/")
+            .build()
+
+        val resp = httpClient.newCall(req).execute()
+        if (!resp.isSuccessful) throw IOException("Failed to resolve Soundcloud track, HTTP ${resp.code}")
+
+        val json = JSONObject(resp.body?.string() ?: "")
+        val media = json.optJSONObject("media") ?: throw IOException("Missing media in track metadata")
+        val transcodings = media.optJSONArray("transcodings") ?: throw IOException("Missing transcodings")
+        val trackAuth = json.optString("track_authorization", "")
+
+        // Prioritize progressive MP3 if available, otherwise AAC/MP3 HLS
+        var selectedUrl: String? = null
+        for (i in 0 until transcodings.length()) {
+            val t = transcodings.getJSONObject(i)
+            val format = t.optJSONObject("format")
+            if (format?.optString("protocol") == "progressive") {
+                selectedUrl = t.getString("url")
+                break
+            }
+        }
+        if (selectedUrl == null && transcodings.length() > 0) {
+            selectedUrl = transcodings.getJSONObject(0).getString("url")
+        }
+
+        if (selectedUrl == null) throw IOException("No usable audio streams found")
+
+        // 2. Fetch direct CDN stream URL
+        val streamUrl = "$selectedUrl?client_id=$clientId" +
+                (if (trackAuth.isNotBlank()) "&track_authorization=$trackAuth" else "")
+        val streamReq = Request.Builder().url(streamUrl).header("User-Agent", USER_AGENT).build()
+        val streamResp = httpClient.newCall(streamReq).execute()
+        if (!streamResp.isSuccessful) throw IOException("Failed to fetch stream auth URL")
+
+        val streamJson = JSONObject(streamResp.body?.string() ?: "")
+        val cdnUrl = streamJson.optString("url")
+        if (cdnUrl.isBlank()) throw IOException("CDN audio URL was empty")
+
+        // 3. Download the audio file
+        val audioReq = Request.Builder().url(cdnUrl).header("User-Agent", USER_AGENT).build()
+        val audioResp = httpClient.newCall(audioReq).execute()
+        if (!audioResp.isSuccessful) throw IOException("Failed to download audio data, HTTP ${audioResp.code}")
+
+        val audioBody = audioResp.body ?: throw IOException("Empty audio response body")
+        val totalBytes = audioBody.contentLength()
+        var downloadedBytes = 0L
+
+        audioBody.byteStream().use { input ->
+            FileOutputStream(targetFile).use { output ->
+                val buffer = ByteArray(8 * 1024)
+                var bytes = input.read(buffer)
+                while (bytes >= 0) {
+                    output.write(buffer, 0, bytes)
+                    downloadedBytes += bytes
+                    val prog = if (totalBytes > 0) downloadedBytes.toFloat() / totalBytes else 0.5f
+                    onProgress(prog.coerceIn(0f, 1f), downloadedBytes, totalBytes)
+                    bytes = input.read(buffer)
+                }
+            }
+        }
+
+        return Result.success(targetFile)
+    }
+
+    private fun getSoundcloudClientId(): String? {
+        cachedSoundcloudClientId?.let { return it }
+        try {
+            val req = Request.Builder()
+                .url("https://soundcloud.com/")
+                .header("User-Agent", USER_AGENT)
+                .build()
+            val html = httpClient.newCall(req).execute().use { it.body?.string().orEmpty() }
+
+            val scriptMatcher = SCRIPT_REGEX.matcher(html)
+            while (scriptMatcher.find()) {
+                val scriptUrl = scriptMatcher.group(1) ?: continue
+                if (!scriptUrl.startsWith("http")) continue
+                val scriptReq = Request.Builder().url(scriptUrl).build()
+                val scriptText = httpClient.newCall(scriptReq).execute().use { it.body?.string().orEmpty() }
+                val clientMatcher = CLIENT_ID_REGEX.matcher(scriptText)
+                if (clientMatcher.find()) {
+                    val id = clientMatcher.group(1)
+                    if (!id.isNullOrBlank()) {
+                        cachedSoundcloudClientId = id
+                        return id
+                    }
+                }
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Log.w(TAG, "Error fetching Soundcloud client ID: ${e.message}")
+        }
+        // Fallback default working key
+        return "qLcgHhXgeEFFaSolTB9I71LBsqncsD93"
+    }
+
+    companion object {
+        private const val TAG = "LucidaDownloader"
+        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        private val SCRIPT_REGEX = Pattern.compile("<script crossorigin src=\"([^\"]+)\"")
+        private val CLIENT_ID_REGEX = Pattern.compile("client_id:\"([a-zA-Z0-9]+)\"")
+
+        fun formatDuration(ms: Long): String {
+            val totalSeconds = ms / 1000
+            val minutes = totalSeconds / 60
+            val seconds = totalSeconds % 60
+            return "%d:%02d".format(minutes, seconds)
         }
     }
 }
